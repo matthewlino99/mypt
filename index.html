@@ -1,0 +1,997 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Athlete Log</title>
+<link rel="manifest" href="data:application/json,{%22name%22:%22Athlete%20Log%22,%22short_name%22:%22Athlete%20Log%22,%22display%22:%22standalone%22,%22start_url%22:%22.%22,%22background_color%22:%22%230B0C0E%22,%22theme_color%22:%22%230B0C0E%22}">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Athlete Log">
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  input, textarea, button { font-family: inherit; }
+</style>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://unpkg.com/recharts@2/umd/Recharts.js"></script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+
+/* ============================================================
+   ATHLETE LOG — webapp autonoma, Supabase come database
+   Referto di laboratorio: ogni valore ha un range, fuori range = + o −
+   ============================================================ */
+
+const SUPABASE_URL = "https://ifsekymivoitcqvoywbh.supabase.co";
+const SUPABASE_KEY = "sb_publishable_vVxzbIyX2GtNP0V3P-43QQ_S2ixDS47";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const { useState, useEffect, useCallback, useMemo } = React;
+const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } = Recharts;
+const { CalendarDays, History, LineChart: LineChartIcon, ClipboardList, Ruler, FlagTriangleRight,
+        Dumbbell, MessagesSquare, HelpCircle, ChevronLeft, Home: HomeIcon, Send, ListChecks,
+        Sun, Moon, LogOut } = lucide;
+
+const PALETTES = {
+  dark: { paper: "#0B0C0E", card: "#17191D", ink: "#F3F4F6", rule: "#2C2F35", muted: "#8B909A", signal: "#FF6259", ok: "#37D399", wash: "#1F2226" },
+  light: { paper: "#EDEEF0", card: "#FFFFFF", ink: "#14171C", rule: "#C9CDD4", muted: "#6B7280", signal: "#E2483D", ok: "#1F6F5C", wash: "#E3E5E9" },
+};
+let C = PALETTES.dark;
+
+const MONO = 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace';
+const SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+
+const TARGET = { kcal: 1850, kcalRefeed: 2100, prot: 110, carb: 195, fat: 70, weeklyLossMin: 0.15, weeklyLossMax: 0.6 };
+const BASE_MEASURE = { chest: 106.5, waist: 90, hips: 103, armR: 36.5, armL: 37.5, thighR: 56.5, thighL: 55 };
+
+const todayISO = () => new Date().toISOString().slice(0, 10);
+const fmt = (n, d = 1) => (n === null || n === undefined || Number.isNaN(n)) ? "—" : Number(n).toFixed(d);
+
+function compressImage(file, maxW = 900, quality = 0.6) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = reject;
+      img.onload = () => {
+        const scale = Math.min(1, maxW / img.width);
+        const canvas = document.createElement("canvas");
+        canvas.width = img.width * scale;
+        canvas.height = img.height * scale;
+        canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((blob) => resolve(blob), "image/jpeg", quality);
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+/* ---------------- primitives ---------------- */
+
+function Eyebrow({ children, n }) {
+  return <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
+    {n && <span style={{ fontFamily: MONO, fontSize: 11, color: C.signal, letterSpacing: "0.08em" }}>{n}</span>}
+    <h2 style={{ fontFamily: SANS, fontSize: 13, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: C.ink, margin: 0 }}>{children}</h2>
+  </div>;
+}
+function Card({ children, style }) {
+  return <div style={{ background: C.card, border: `1px solid ${C.rule}`, padding: 18, marginBottom: 14, ...style }}>{children}</div>;
+}
+function Label({ children }) {
+  return <div style={{ fontFamily: SANS, fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, marginBottom: 5 }}>{children}</div>;
+}
+function Field({ label, unit, value, onChange, type = "number", placeholder, step }) {
+  return <label style={{ display: "block", marginBottom: 14 }}>
+    <Label>{label}{unit && <span style={{ color: C.rule }}> · {unit}</span>}</Label>
+    <input type={type} inputMode={type === "number" ? "decimal" : undefined} step={step} value={value ?? ""} placeholder={placeholder}
+      onChange={(e) => onChange(e.target.value)}
+      style={{ width: "100%", fontFamily: MONO, fontSize: 17, padding: "11px 12px", border: `1px solid ${C.rule}`, background: C.paper, color: C.ink, outline: "none", boxSizing: "border-box", borderRadius: 0 }} />
+  </label>;
+}
+function TextArea({ label, value, onChange, rows = 3, placeholder }) {
+  return <label style={{ display: "block", marginBottom: 14 }}>
+    {label && <Label>{label}</Label>}
+    <textarea rows={rows} value={value ?? ""} placeholder={placeholder} onChange={(e) => onChange(e.target.value)}
+      style={{ width: "100%", fontFamily: SANS, fontSize: 15, lineHeight: 1.5, padding: "11px 12px", border: `1px solid ${C.rule}`, background: C.paper, color: C.ink, outline: "none", boxSizing: "border-box", resize: "vertical", borderRadius: 0 }} />
+  </label>;
+}
+function Scale({ label, value, onChange, lo = "basso", hi = "alto" }) {
+  return <div style={{ marginBottom: 16 }}>
+    <Label>{label}</Label>
+    <div style={{ display: "flex", gap: 3 }}>
+      {[1,2,3,4,5,6,7,8,9,10].map((n) => (
+        <button key={n} onClick={() => onChange(value === n ? null : n)}
+          style={{ flex: 1, fontFamily: MONO, fontSize: 13, padding: "9px 0", border: `1px solid ${value === n ? C.ink : C.rule}`, background: value === n ? C.ink : C.card, color: value === n ? C.card : C.muted, cursor: "pointer", borderRadius: 0 }}>{n}</button>
+      ))}
+    </div>
+    <div style={{ display: "flex", justifyContent: "space-between", fontFamily: SANS, fontSize: 10, color: C.rule, marginTop: 4 }}><span>{lo}</span><span>{hi}</span></div>
+  </div>;
+}
+function Choice({ label, options, value, onChange }) {
+  return <div style={{ marginBottom: 16 }}>
+    <Label>{label}</Label>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+      {options.map((o) => (
+        <button key={o} onClick={() => onChange(value === o ? null : o)}
+          style={{ fontFamily: SANS, fontSize: 13, padding: "8px 13px", border: `1px solid ${value === o ? C.ink : C.rule}`, background: value === o ? C.ink : C.card, color: value === o ? C.card : C.ink, cursor: "pointer", borderRadius: 0 }}>{o}</button>
+      ))}
+    </div>
+  </div>;
+}
+function Button({ children, onClick, variant = "solid", disabled }) {
+  const solid = variant === "solid";
+  return <button onClick={onClick} disabled={disabled}
+    style={{ width: "100%", fontFamily: SANS, fontSize: 13, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", padding: 14, border: `1px solid ${disabled ? C.rule : C.ink}`, background: disabled ? C.wash : (solid ? C.ink : C.card), color: disabled ? C.muted : (solid ? C.card : C.ink), cursor: disabled ? "default" : "pointer", borderRadius: 0 }}>{children}</button>;
+}
+function Readout({ name, value, unit, range, flag }) {
+  const color = flag ? C.signal : C.ink;
+  return <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8, alignItems: "baseline", padding: "7px 0", borderBottom: `1px solid ${C.wash}` }}>
+    <span style={{ fontFamily: SANS, fontSize: 13, color: C.ink }}>{name}</span>
+    <span style={{ fontFamily: MONO, fontSize: 11, color: C.muted }}>{range}</span>
+    <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 700, color, minWidth: 66, textAlign: "right" }}>{value}{unit ? ` ${unit}` : ""}{flag ? ` ${flag}` : ""}</span>
+  </div>;
+}
+const cellInput = { fontFamily: MONO, fontSize: 15, padding: "9px 8px", border: `1px solid ${C.rule}`, background: C.paper, color: C.ink, outline: "none", width: "100%", boxSizing: "border-box", borderRadius: 0 };
+
+/* ============================ AUTH ============================ */
+
+function AuthGate({ children }) {
+  const [session, setSession] = useState(undefined);
+  const [mode, setMode] = useState("signin");
+  const [email, setEmail] = useState("");
+  const [pw, setPw] = useState("");
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    sb.auth.getSession().then(({ data }) => setSession(data.session));
+    const { data: sub } = sb.auth.onAuthStateChange((_e, s) => setSession(s));
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  if (session === undefined) return <div style={{ minHeight: "100vh", background: C.paper, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: MONO, fontSize: 12, color: C.muted }}>caricamento…</div>;
+  if (session) return children(session);
+
+  const submit = async () => {
+    setBusy(true); setMsg("");
+    const fn = mode === "signin" ? sb.auth.signInWithPassword : sb.auth.signUp;
+    const { error } = await fn({ email, password: pw });
+    setBusy(false);
+    if (error) setMsg(error.message);
+    else if (mode === "signup") setMsg("Account creato. Controlla la mail per confermare, poi accedi.");
+  };
+
+  return <div style={{ minHeight: "100vh", background: C.paper, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+    <div style={{ width: "100%", maxWidth: 340 }}>
+      <div style={{ fontFamily: SANS, fontSize: 20, fontWeight: 800, marginBottom: 4, textAlign: "center", color: C.ink }}>Athlete Log</div>
+      <div style={{ fontFamily: MONO, fontSize: 11, color: C.muted, textAlign: "center", marginBottom: 24 }}>accesso privato</div>
+      <Card>
+        <Field label="Email" type="email" value={email} onChange={setEmail} placeholder="tu@mail.com" />
+        <Field label="Password" type="password" value={pw} onChange={setPw} placeholder="••••••••" />
+        {msg && <div style={{ fontFamily: SANS, fontSize: 12, color: C.signal, marginBottom: 12, lineHeight: 1.5 }}>{msg}</div>}
+        <Button onClick={submit} disabled={busy || !email || !pw}>{mode === "signin" ? "Accedi" : "Crea account"}</Button>
+        <div style={{ textAlign: "center", marginTop: 14 }}>
+          <button onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setMsg(""); }}
+            style={{ border: "none", background: "none", fontFamily: SANS, fontSize: 12, color: C.muted, textDecoration: "underline", cursor: "pointer" }}>
+            {mode === "signin" ? "Non hai un account? Creane uno" : "Hai già un account? Accedi"}
+          </button>
+        </div>
+      </Card>
+    </div>
+  </div>;
+}
+
+/* ============================ WORKOUT PLAN DATA ============================ */
+
+const WORKOUTS = {
+  A: { name: "Workout A · focus spinta", ex: [["Leg press","3 × 8-10","Piedi a media altezza"],["Chest press macchina o panca inclinata","3 × 8-10","Sostituisce le dips"],["Lat machine presa neutra","3 × 8-10",""],["Leg curl seduto","3 × 10-12",""],["Alzate laterali manubri","3 × 12-15","Solo manubri, mai cavo basso"],["Curl manubri alternato","2 × 8-10",""],["Pushdown corda","2 × 10-12",""]] },
+  B: { name: "Workout B · focus trazione", ex: [["Hack squat (o leg press piedi alti)","3 × 8-10","Nessun bilanciere sulla schiena"],["Rematore macchina presa neutra","3 × 8-10",""],["Chest press, angolo diverso da A","3 × 8-10",""],["Hyperextension","3 × 10-12","Controllata"],["Pull-up assistite o lat machine larga","2 × 6-8",""],["Alzate laterali manubri","2 × 12-15",""],["French press o pushdown","2 × 10-12",""]] },
+  C: { name: "Workout C · gambe e braccia", ex: [["Leg extension","3 × 10-12",""],["Leg curl sdraiato","3 × 10-12",""],["Chest press o croci ai cavi","2 × 10-12",""],["Rematore singolo manubrio","3 × 8-10",""],["Face pull o reverse fly","2 × 12-15","Aiuta i deltoidi posteriori"],["Prayer curl o bayesian curl","2 × 8-10",""],["Skull crusher o pushdown","2 × 10-12",""]] },
+};
+const parseTargetSets = (spec) => parseInt(spec) || 3;
+const parseRepsRange = (spec) => (spec.split("×")[1] || "").trim();
+
+function bestSet(sets) {
+  return (sets || []).reduce((best, s) => {
+    const w = Number(s.weight) || 0, r = Number(s.reps) || 0;
+    if (!w && !r) return best;
+    if (!best) return { weight: w, reps: r };
+    return w > best.weight || (w === best.weight && r > best.reps) ? { weight: w, reps: r } : best;
+  }, null);
+}
+function computeAllPRs(workouts) {
+  const best = {};
+  Object.entries(workouts).forEach(([date, sess]) => {
+    const groups = [
+      ...Object.entries(sess.sets || {}).map(([name, sets]) => ({ name, sets })),
+      ...(sess.extra || []).map((e) => ({ name: e.name, sets: e.sets || [] })),
+    ];
+    groups.forEach(({ name, sets }) => {
+      const b = bestSet(sets);
+      if (!b || !b.weight) return;
+      if (!best[name] || b.weight > best[name].weight || (b.weight === best[name].weight && b.reps > best[name].reps)) best[name] = { ...b, date };
+    });
+  });
+  return best;
+}
+
+/* ============================ SECTIONS / HOME ============================ */
+
+const SECTIONS = [
+  { key: "oggi", label: "Oggi", icon: CalendarDays, desc: "Peso e macro" },
+  { key: "allenamento", label: "Allenamento", icon: Dumbbell, desc: "Log serie e carichi" },
+  { key: "storico", label: "Storico", icon: History, desc: "Tutte le giornate" },
+  { key: "grafici", label: "Grafici", icon: LineChartIcon, desc: "Trend nel tempo" },
+  { key: "settimana", label: "Settimana", icon: ClipboardList, desc: "Check-in settimanale" },
+  { key: "mese", label: "Mese", icon: Ruler, desc: "Circonferenze e foto" },
+  { key: "ciclo", label: "Fine ciclo", icon: FlagTriangleRight, desc: "Bilancio 8 settimane" },
+  { key: "piano", label: "Piano", icon: ListChecks, desc: "Scheda e macro attuali" },
+  { key: "coach", label: "Coach", icon: MessagesSquare, desc: "Le mie valutazioni" },
+  { key: "export", label: "Export", icon: Send, desc: "Report da mandare in chat" },
+  { key: "guida", label: "Guida", icon: HelpCircle, desc: "Come funziona" },
+];
+
+function Home({ go, preview }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+      {SECTIONS.map(({ key, label, icon: Icon, desc }) => (
+        <button key={key} onClick={() => go(key)}
+          style={{ textAlign: "left", background: C.card, border: `1px solid ${C.rule}`, borderRadius: 4, padding: 16, cursor: "pointer", display: "flex", flexDirection: "column", gap: 10, minHeight: 118 }}>
+          <Icon size={20} color={C.signal} strokeWidth={1.75} />
+          <div>
+            <div style={{ fontFamily: SANS, fontSize: 14, fontWeight: 700, color: C.ink }}>{label}</div>
+            <div style={{ fontFamily: SANS, fontSize: 11, color: C.muted, marginTop: 2 }}>{desc}</div>
+          </div>
+          <div style={{ fontFamily: MONO, fontSize: 11, color: C.ok, marginTop: "auto" }}>{preview[key]}</div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* ============================ GUIDA ============================ */
+
+function Step({ n, title, children }) {
+  return <div style={{ display: "grid", gridTemplateColumns: "26px 1fr", gap: 12, marginBottom: 18 }}>
+    <div style={{ fontFamily: MONO, fontSize: 12, color: C.signal, paddingTop: 2 }}>{n}</div>
+    <div><div style={{ fontFamily: SANS, fontSize: 14, fontWeight: 700, marginBottom: 4 }}>{title}</div><div style={{ fontFamily: SANS, fontSize: 13.5, color: C.muted, lineHeight: 1.6 }}>{children}</div></div>
+  </div>;
+}
+function Guida({ go }) {
+  const link = (label, t) => <button onClick={() => go(t)} style={{ border: "none", background: "none", padding: 0, font: "inherit", color: C.ink, textDecoration: "underline", cursor: "pointer" }}>{label}</button>;
+  return <>
+    <Eyebrow n="00">Come funziona</Eyebrow>
+    <Card>
+      <div style={{ fontFamily: SANS, fontSize: 14, lineHeight: 1.65, color: C.ink }}>
+        Questa è una webapp tua, indipendente da Claude: i dati vivono su Supabase, protetti dal
+        tuo login, nessun altro può vederli. Le foto restano qui dentro, private.
+        <br /><br />
+        <strong>Regola base:</strong> quando vuoi la mia analisi, generi un report in Export e me lo
+        incolli in chat — o, una volta collegato il connettore, mi basta che tu me lo dica.
+      </div>
+    </Card>
+    <Eyebrow n="01">Il giro</Eyebrow>
+    <Card>
+      <Step n="1" title="Ogni giorno">In {link("Oggi", "oggi")}: peso e macro.</Step>
+      <Step n="2" title="Nei giorni di allenamento">{link("Allenamento", "allenamento")}: scegli la scheda, registri peso e reps serie per serie. I record si aggiornano da soli in {link("Storico", "storico")}.</Step>
+      <Step n="3" title="Ogni domenica">{link("Settimana", "settimana")}: check-in adattivo.</Step>
+      <Step n="4" title="Parli con me">{link("Export", "export")} genera il report, lo incolli in chat.</Step>
+      <Step n="5" title="Ogni 4 settimane">{link("Mese", "mese")}: circonferenze, percezione, foto private.</Step>
+      <Step n="6" title="Ogni 8 settimane">{link("Fine ciclo", "ciclo")}: il bilancio lungo.</Step>
+      <Step n="7" title="Le mie valutazioni">Le trovi in {link("Coach", "coach")}.</Step>
+    </Card>
+  </>;
+}
+
+/* ============================ OGGI ============================ */
+
+function Daily({ uid, daily, setDaily, ping, thisWeek, weekDelta, avgMacro }) {
+  const [date, setDate] = useState(todayISO());
+  const [form, setForm] = useState({});
+  useEffect(() => setForm(daily[date] || {}), [date, daily]);
+  const set = (k) => (v) => setForm((f) => ({ ...f, [k]: v }));
+  const macroKcal = form.prot && form.carb && form.fat ? Number(form.prot) * 4 + Number(form.carb) * 4 + Number(form.fat) * 9 : null;
+
+  const save = async () => {
+    const row = { user_id: uid, log_date: date, weight: form.weight || null, kcal: form.kcal || null, prot: form.prot || null, carb: form.carb || null, fat: form.fat || null, session: form.session || null, note: form.note || null };
+    const { error } = await sb.from("daily_logs").upsert(row, { onConflict: "user_id,log_date" });
+    if (error) { ping("Errore: " + error.message); return; }
+    setDaily((d) => ({ ...d, [date]: row }));
+    ping("Giornata salvata");
+  };
+  const flag = (val, target, tol) => !val ? null : Number(val) > target + tol ? "+" : Number(val) < target - tol ? "−" : null;
+
+  return <>
+    <Eyebrow n="01">Registrazione giornaliera</Eyebrow>
+    <Card>
+      <Field label="Data" type="date" value={date} onChange={setDate} />
+      <Field label="Peso mattutino" unit="kg" step="0.1" value={form.weight} onChange={set("weight")} placeholder="76.4" />
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Field label="Proteine" unit="g" value={form.prot} onChange={set("prot")} placeholder="110" />
+        <Field label="Carboidrati" unit="g" value={form.carb} onChange={set("carb")} placeholder="195" />
+        <Field label="Grassi" unit="g" value={form.fat} onChange={set("fat")} placeholder="70" />
+        <Field label="Calorie" unit="kcal" value={form.kcal} onChange={set("kcal")} placeholder="1850" />
+      </div>
+      {macroKcal && <div style={{ fontFamily: MONO, fontSize: 11, color: form.kcal && Math.abs(macroKcal - Number(form.kcal)) > 80 ? C.signal : C.muted, marginTop: -4, marginBottom: 12 }}>
+        Dai macro: {Math.round(macroKcal)} kcal{form.kcal && Math.abs(macroKcal - Number(form.kcal)) > 80 ? " — non torna, ricontrolla" : ""}
+      </div>}
+      <Choice label="Allenamento oggi" options={["A", "B", "C", "Tennis/Padel", "Riposo"]} value={form.session} onChange={set("session")} />
+      <TextArea label="Note" rows={2} value={form.note} onChange={set("note")} placeholder="Pasto fuori, dolore, imprevisti…" />
+      <Button onClick={save}>Salva giornata</Button>
+    </Card>
+    <Eyebrow n="02">Lettura corrente</Eyebrow>
+    <Card>
+      <Readout name="Media peso 7 gg" value={thisWeek ? fmt(thisWeek.avg, 2) : "—"} unit="kg" range={`n=${thisWeek?.n ?? 0}`} />
+      <Readout name="Variazione vs sett. prec." value={weekDelta !== null ? (weekDelta > 0 ? "+" : "") + fmt(weekDelta, 2) : "—"} unit="kg" range="−0.15…−0.60"
+        flag={weekDelta === null ? null : weekDelta > -TARGET.weeklyLossMin ? "+" : weekDelta < -TARGET.weeklyLossMax ? "−" : null} />
+      <Readout name="Media kcal 7 gg" value={fmt(avgMacro("kcal"), 0)} unit="kcal" range={`${TARGET.kcal}`} flag={flag(avgMacro("kcal"), TARGET.kcal, 150)} />
+      <Readout name="Media proteine 7 gg" value={fmt(avgMacro("prot"), 0)} unit="g" range={`${TARGET.prot}`} flag={flag(avgMacro("prot"), TARGET.prot, 15)} />
+      <Readout name="Media carbo 7 gg" value={fmt(avgMacro("carb"), 0)} unit="g" range={`${TARGET.carb}`} flag={flag(avgMacro("carb"), TARGET.carb, 30)} />
+      <Readout name="Media grassi 7 gg" value={fmt(avgMacro("fat"), 0)} unit="g" range={`${TARGET.fat}`} flag={flag(avgMacro("fat"), TARGET.fat, 12)} />
+    </Card>
+  </>;
+}
+
+/* ========================== ALLENAMENTO ========================== */
+
+function ExerciseBlock({ name, targetSets, repsRange, note, rows, onSet, noteVal, onNote, lastText }) {
+  return (
+    <Card>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4, gap: 8 }}>
+        <span style={{ fontFamily: SANS, fontSize: 14, fontWeight: 700 }}>{name}</span>
+        {repsRange && <span style={{ fontFamily: MONO, fontSize: 11, color: C.muted, whiteSpace: "nowrap" }}>target {repsRange}</span>}
+      </div>
+      {note && <div style={{ fontFamily: SANS, fontSize: 11, color: C.muted, marginBottom: 8 }}>{note}</div>}
+      {lastText && <div style={{ fontFamily: MONO, fontSize: 11, color: C.ok, marginBottom: 10 }}>ultima volta: {lastText}</div>}
+      <div style={{ display: "grid", gridTemplateColumns: "20px 1fr 1fr", gap: 8, marginBottom: 6 }}>
+        <span /><span style={{ fontFamily: MONO, fontSize: 10, color: C.muted }}>KG</span><span style={{ fontFamily: MONO, fontSize: 10, color: C.muted }}>REPS</span>
+      </div>
+      {Array.from({ length: targetSets }).map((_, idx) => (
+        <div key={idx} style={{ display: "grid", gridTemplateColumns: "20px 1fr 1fr", gap: 8, marginBottom: 8, alignItems: "center" }}>
+          <span style={{ fontFamily: MONO, fontSize: 11, color: C.muted }}>{idx + 1}</span>
+          <input type="number" inputMode="decimal" placeholder="—" value={rows[idx]?.weight ?? ""} onChange={(e) => onSet(idx, "weight", e.target.value)} style={cellInput} />
+          <input type="number" inputMode="numeric" placeholder="—" value={rows[idx]?.reps ?? ""} onChange={(e) => onSet(idx, "reps", e.target.value)} style={cellInput} />
+        </div>
+      ))}
+      <TextArea label="Note" rows={2} value={noteVal} onChange={onNote} placeholder="Sensazioni, dolore, tecnica…" />
+    </Card>
+  );
+}
+
+function Allenamento({ uid, workouts, setWorkouts, daily, setDaily, ping }) {
+  const [date, setDate] = useState(todayISO());
+  const existing = workouts[date];
+  const [letter, setLetter] = useState(existing?.letter || "A");
+  const [sets, setSets] = useState(existing?.sets || {});
+  const [notes, setNotes] = useState(existing?.notes || {});
+  const [extra, setExtra] = useState(existing?.extra || []);
+  const [newExName, setNewExName] = useState("");
+
+  useEffect(() => {
+    const e = workouts[date];
+    setLetter(e?.letter || "A"); setSets(e?.sets || {}); setNotes(e?.notes || {}); setExtra(e?.extra || []);
+  }, [date]);
+
+  const plan = WORKOUTS[letter];
+
+  const lastTime = (name) => {
+    const days = Object.keys(workouts).filter((d) => d < date).sort().reverse();
+    for (const d of days) {
+      const sess = workouts[d];
+      const b = bestSet(sess.sets?.[name]) || bestSet(sess.extra?.find((e) => e.name === name)?.sets);
+      if (b && b.weight) return `${b.weight}kg × ${b.reps} (${d})`;
+    }
+    return null;
+  };
+
+  const setPlanSet = (name, idx, field, val) => setSets((s) => { const arr = s[name] ? [...s[name]] : []; arr[idx] = { ...(arr[idx] || {}), [field]: val }; return { ...s, [name]: arr }; });
+  const setExtraSet = (exi, idx, field, val) => setExtra((ex) => { const next = [...ex]; const setsArr = next[exi].sets ? [...next[exi].sets] : []; setsArr[idx] = { ...(setsArr[idx] || {}), [field]: val }; next[exi] = { ...next[exi], sets: setsArr }; return next; });
+  const addExtraSet = (exi) => setExtra((ex) => { const next = [...ex]; next[exi] = { ...next[exi], sets: [...(next[exi].sets || []), {}] }; return next; });
+  const addExtraExercise = () => { if (!newExName.trim()) return; setExtra((ex) => [...ex, { name: newExName.trim(), sets: [{}, {}, {}] }]); setNewExName(""); };
+
+  const save = async () => {
+    const row = { user_id: uid, session_date: date, letter, sets, notes, extra };
+    const { error } = await sb.from("workout_sessions").upsert(row, { onConflict: "user_id,session_date" });
+    if (error) { ping("Errore: " + error.message); return; }
+    setWorkouts((w) => ({ ...w, [date]: { letter, sets, notes, extra } }));
+
+    const drow = { user_id: uid, log_date: date, ...(daily[date] || {}), session: letter };
+    await sb.from("daily_logs").upsert(drow, { onConflict: "user_id,log_date" });
+    setDaily((d) => ({ ...d, [date]: drow }));
+
+    ping("Allenamento salvato");
+  };
+
+  return (
+    <>
+      <Eyebrow n="01b">Log allenamento</Eyebrow>
+      <Card>
+        <Field label="Data" type="date" value={date} onChange={setDate} />
+        <Choice label="Quale scheda" options={["A", "B", "C"]} value={letter} onChange={(v) => setLetter(v || "A")} />
+      </Card>
+      {plan.ex.map(([name, setsSpec, note]) => (
+        <ExerciseBlock key={name} name={name} targetSets={parseTargetSets(setsSpec)} repsRange={parseRepsRange(setsSpec)} note={note}
+          rows={sets[name] || []} onSet={(idx, field, val) => setPlanSet(name, idx, field, val)}
+          noteVal={notes[name]} onNote={(v) => setNotes((n) => ({ ...n, [name]: v }))} lastText={lastTime(name)} />
+      ))}
+      {extra.map((ex, exi) => (
+        <Card key={exi}>
+          <div style={{ fontFamily: SANS, fontSize: 14, fontWeight: 700, marginBottom: 10 }}>{ex.name} <span style={{ fontFamily: MONO, fontSize: 10, color: C.signal }}>· sostituzione</span></div>
+          {(ex.sets || []).map((_, idx) => (
+            <div key={idx} style={{ display: "grid", gridTemplateColumns: "20px 1fr 1fr", gap: 8, marginBottom: 8, alignItems: "center" }}>
+              <span style={{ fontFamily: MONO, fontSize: 11, color: C.muted }}>{idx + 1}</span>
+              <input type="number" inputMode="decimal" placeholder="kg" value={ex.sets[idx]?.weight ?? ""} onChange={(e) => setExtraSet(exi, idx, "weight", e.target.value)} style={cellInput} />
+              <input type="number" inputMode="numeric" placeholder="reps" value={ex.sets[idx]?.reps ?? ""} onChange={(e) => setExtraSet(exi, idx, "reps", e.target.value)} style={cellInput} />
+            </div>
+          ))}
+          <Button variant="outline" onClick={() => addExtraSet(exi)}>+ serie</Button>
+        </Card>
+      ))}
+      <Card>
+        <Field label="Hai sostituito un esercizio?" type="text" value={newExName} onChange={setNewExName} placeholder="Nome dell'esercizio fatto" />
+        <Button variant="outline" onClick={addExtraExercise}>Aggiungi esercizio</Button>
+      </Card>
+      <Card><Button onClick={save}>Salva allenamento</Button></Card>
+    </>
+  );
+}
+
+/* =========================== STORICO =========================== */
+
+function Storico({ sortedDays, daily, weeklies, monthlies, cycles, workouts }) {
+  const [view, setView] = useState("giorni");
+  const days = [...sortedDays].reverse();
+  const prs = useMemo(() => computeAllPRs(workouts || {}), [workouts]);
+  const prList = Object.entries(prs).sort((a, b) => a[0].localeCompare(b[0]));
+
+  return (
+    <>
+      <Eyebrow n="02b">Storico</Eyebrow>
+      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+        {[["giorni", "Giorni"], ["settimane", "Settimane"], ["mesi", "Mesi"], ["cicli", "Cicli"], ["record", "Record"]].map(([k, label]) => (
+          <button key={k} onClick={() => setView(k)}
+            style={{ flex: "1 1 auto", fontFamily: SANS, fontSize: 12, fontWeight: 700, padding: "10px 6px", border: `1px solid ${view === k ? C.ink : C.rule}`, background: view === k ? C.ink : C.card, color: view === k ? C.card : C.ink, cursor: "pointer", borderRadius: 0 }}>{label}</button>
+        ))}
+      </div>
+
+      {view === "giorni" && (days.length === 0 ? <Card><div style={{ fontFamily: SANS, fontSize: 13, color: C.muted }}>Nessuna giornata ancora registrata.</div></Card> :
+        days.map((d) => { const e = daily[d]; return (
+          <Card key={d} style={{ padding: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+              <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700 }}>{d}</span>
+              {e?.session && <span style={{ fontFamily: MONO, fontSize: 11, color: C.signal }}>{e.session}</span>}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, fontFamily: MONO, fontSize: 12 }}>
+              <div><div style={{ color: C.muted, fontSize: 10 }}>PESO</div>{e?.weight ? `${e.weight}kg` : "—"}</div>
+              <div><div style={{ color: C.muted, fontSize: 10 }}>KCAL</div>{e?.kcal ?? "—"}</div>
+              <div><div style={{ color: C.muted, fontSize: 10 }}>PROT</div>{e?.prot ?? "—"}</div>
+              <div><div style={{ color: C.muted, fontSize: 10 }}>CARB/FAT</div>{e?.carb ?? "—"}/{e?.fat ?? "—"}</div>
+            </div>
+          </Card>
+        ); }))}
+
+      {view === "settimane" && (weeklies.length === 0 ? <Card><div style={{ fontFamily: SANS, fontSize: 13, color: C.muted }}>Nessun check-in ancora.</div></Card> :
+        [...weeklies].reverse().map((w, i) => (
+          <Card key={i}>
+            <div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 8 }}>{w.date}</div>
+            <div style={{ fontFamily: SANS, fontSize: 13, lineHeight: 1.7 }}>
+              {w.avgWeight && <div>Media peso: <b>{fmt(w.avgWeight, 2)} kg</b></div>}
+              {w.adherence && <div>Aderenza: {w.adherence}</div>}
+              {w.pain && w.pain !== "Nessuno" && <div style={{ color: C.signal }}>Dolore: {w.pain}</div>}
+            </div>
+          </Card>
+        )))}
+
+      {view === "mesi" && (monthlies.length === 0 ? <Card><div style={{ fontFamily: SANS, fontSize: 13, color: C.muted }}>Nessuna misura ancora.</div></Card> :
+        [...monthlies].reverse().map((m, i) => (
+          <Card key={i}>
+            <div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 8 }}>{m.date}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, fontFamily: MONO, fontSize: 12 }}>
+              {["chest", "waist", "hips", "armL", "armR", "thighL", "thighR"].filter((k) => m[k]).map((k) => (
+                <div key={k}><div style={{ color: C.muted, fontSize: 10 }}>{k.toUpperCase()}</div>{m[k]} cm</div>
+              ))}
+            </div>
+          </Card>
+        )))}
+
+      {view === "cicli" && (cycles.length === 0 ? <Card><div style={{ fontFamily: SANS, fontSize: 13, color: C.muted }}>Nessuna review ancora.</div></Card> :
+        [...cycles].reverse().map((c, i) => (
+          <Card key={i}>
+            <div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 8 }}>{c.date}</div>
+            {c.startWeight && c.endWeight && <div style={{ fontFamily: SANS, fontSize: 13 }}>Peso: {c.startWeight} → {c.endWeight} kg</div>}
+          </Card>
+        )))}
+
+      {view === "record" && (prList.length === 0 ? <Card><div style={{ fontFamily: SANS, fontSize: 13, color: C.muted }}>Nessun record ancora.</div></Card> :
+        <Card>{prList.map(([name, r]) => (
+          <div key={name} style={{ display: "flex", justifyContent: "space-between", padding: "9px 0", borderBottom: `1px solid ${C.wash}` }}>
+            <span style={{ fontFamily: SANS, fontSize: 13 }}>{name}</span>
+            <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: C.ok }}>{r.weight}kg × {r.reps} <span style={{ color: C.muted, fontWeight: 400, fontSize: 10 }}>{r.date}</span></span>
+          </div>
+        ))}</Card>)}
+    </>
+  );
+}
+
+/* =========================== GRAFICI =========================== */
+
+function Charts({ daily, sortedDays, monthlies }) {
+  const rows = sortedDays.map((d) => ({ date: d.slice(5), weight: daily[d]?.weight ? Number(daily[d].weight) : null, kcal: daily[d]?.kcal ? Number(daily[d].kcal) : null, prot: daily[d]?.prot ? Number(daily[d].prot) : null }));
+  const withMA = rows.map((r, i) => { const win = rows.slice(Math.max(0, i - 6), i + 1).map((x) => x.weight).filter((x) => x !== null); return { ...r, ma: win.length >= 3 ? +(win.reduce((a, b) => a + b, 0) / win.length).toFixed(2) : null }; });
+  const axis = { stroke: C.muted, fontSize: 10, fontFamily: MONO };
+
+  if (rows.length < 2) return <><Eyebrow n="02">Grafici</Eyebrow><Card><div style={{ fontFamily: SANS, fontSize: 14, color: C.muted }}>Servono almeno due giorni registrati.</div></Card></>;
+
+  return (
+    <>
+      <Eyebrow n="02">Grafici</Eyebrow>
+      <Card>
+        <div style={{ fontFamily: MONO, fontSize: 11, color: C.muted, marginBottom: 12 }}>PESO · punti e media mobile 7 gg</div>
+        <div style={{ height: 220 }}><ResponsiveContainer width="100%" height="100%"><LineChart data={withMA} margin={{ top: 5, right: 8, left: -18, bottom: 0 }}>
+          <CartesianGrid stroke={C.wash} vertical={false} /><XAxis dataKey="date" tick={axis} interval="preserveStartEnd" /><YAxis domain={["dataMin - 0.5", "dataMax + 0.5"]} tick={axis} />
+          <Tooltip contentStyle={{ fontFamily: MONO, fontSize: 11, border: `1px solid ${C.rule}`, borderRadius: 0 }} />
+          <Line type="monotone" dataKey="weight" stroke={C.rule} strokeWidth={1} dot={{ r: 2, fill: C.rule }} connectNulls name="peso" />
+          <Line type="monotone" dataKey="ma" stroke={C.ink} strokeWidth={2.2} dot={false} connectNulls name="media 7gg" />
+        </LineChart></ResponsiveContainer></div>
+      </Card>
+      <Card>
+        <div style={{ fontFamily: MONO, fontSize: 11, color: C.muted, marginBottom: 12 }}>CALORIE · target {TARGET.kcal}</div>
+        <div style={{ height: 190 }}><ResponsiveContainer width="100%" height="100%"><LineChart data={rows} margin={{ top: 5, right: 8, left: -18, bottom: 0 }}>
+          <CartesianGrid stroke={C.wash} vertical={false} /><XAxis dataKey="date" tick={axis} interval="preserveStartEnd" /><YAxis tick={axis} />
+          <Tooltip contentStyle={{ fontFamily: MONO, fontSize: 11, border: `1px solid ${C.rule}`, borderRadius: 0 }} /><ReferenceLine y={TARGET.kcal} stroke={C.signal} strokeDasharray="4 4" />
+          <Line type="monotone" dataKey="kcal" stroke={C.ink} strokeWidth={1.8} dot={{ r: 2 }} connectNulls name="kcal" />
+        </LineChart></ResponsiveContainer></div>
+      </Card>
+      <Card>
+        <div style={{ fontFamily: MONO, fontSize: 11, color: C.muted, marginBottom: 12 }}>PROTEINE · target {TARGET.prot} g</div>
+        <div style={{ height: 190 }}><ResponsiveContainer width="100%" height="100%"><LineChart data={rows} margin={{ top: 5, right: 8, left: -18, bottom: 0 }}>
+          <CartesianGrid stroke={C.wash} vertical={false} /><XAxis dataKey="date" tick={axis} interval="preserveStartEnd" /><YAxis tick={axis} />
+          <Tooltip contentStyle={{ fontFamily: MONO, fontSize: 11, border: `1px solid ${C.rule}`, borderRadius: 0 }} /><ReferenceLine y={TARGET.prot} stroke={C.signal} strokeDasharray="4 4" />
+          <Line type="monotone" dataKey="prot" stroke={C.ok} strokeWidth={1.8} dot={{ r: 2 }} connectNulls name="proteine" />
+        </LineChart></ResponsiveContainer></div>
+      </Card>
+      {monthlies && monthlies.length >= 2 && (
+        <Card>
+          <div style={{ fontFamily: MONO, fontSize: 11, color: C.muted, marginBottom: 12 }}>CIRCONFERENZE · vita e torace</div>
+          <div style={{ height: 200 }}><ResponsiveContainer width="100%" height="100%"><LineChart data={monthlies.map((m) => ({ date: m.date?.slice(5), waist: m.waist ? Number(m.waist) : null, chest: m.chest ? Number(m.chest) : null }))} margin={{ top: 5, right: 8, left: -18, bottom: 0 }}>
+            <CartesianGrid stroke={C.wash} vertical={false} /><XAxis dataKey="date" tick={axis} interval="preserveStartEnd" /><YAxis tick={axis} domain={["dataMin - 2", "dataMax + 2"]} />
+            <Tooltip contentStyle={{ fontFamily: MONO, fontSize: 11, border: `1px solid ${C.rule}`, borderRadius: 0 }} />
+            <Line type="monotone" dataKey="waist" stroke={C.signal} strokeWidth={2} dot={{ r: 3 }} connectNulls name="vita" />
+            <Line type="monotone" dataKey="chest" stroke={C.ok} strokeWidth={2} dot={{ r: 3 }} connectNulls name="torace" />
+          </LineChart></ResponsiveContainer></div>
+        </Card>
+      )}
+    </>
+  );
+}
+
+/* ========================== SETTIMANA ========================== */
+
+function Weekly({ uid, weeklies, setWeeklies, ping, thisWeek, weekDelta, avgMacro }) {
+  const [f, setF] = useState({});
+  const set = (k) => (v) => setF((s) => ({ ...s, [k]: v }));
+  const tooFast = weekDelta !== null && weekDelta < -TARGET.weeklyLossMax;
+  const stalled = weekDelta !== null && weekDelta > -TARGET.weeklyLossMin;
+  const painFlag = f.pain && f.pain !== "Nessuno";
+  const perfDown = f.perf === "Peggiorata";
+  const sleepDown = f.sleep && Number(f.sleep) <= 4;
+  const lowAdherence = f.adherence === "Sotto il 70%";
+
+  const save = async () => {
+    const data = { ...f, avgWeight: thisWeek?.avg ?? null, delta: weekDelta, avgKcal: avgMacro("kcal"), avgProt: avgMacro("prot") };
+    const row = { user_id: uid, week_date: todayISO(), data };
+    const { data: inserted, error } = await sb.from("weekly_checkins").insert(row).select().single();
+    if (error) { ping("Errore: " + error.message); return; }
+    setWeeklies((w) => [...w, { date: inserted.week_date, ...inserted.data }]);
+    ping("Check-in salvato"); setF({});
+  };
+
+  return <>
+    <Eyebrow n="03">Check-in settimanale</Eyebrow>
+    <Card style={{ borderLeft: `3px solid ${C.ink}` }}>
+      <Readout name="Media peso" value={thisWeek ? fmt(thisWeek.avg, 2) : "—"} unit="kg" range={`n=${thisWeek?.n ?? 0}`} />
+      <Readout name="Variazione" value={weekDelta !== null ? (weekDelta > 0 ? "+" : "") + fmt(weekDelta, 2) : "—"} unit="kg" range="−0.15…−0.60" flag={weekDelta === null ? null : tooFast ? "−" : stalled ? "+" : null} />
+    </Card>
+    <Card>
+      <Choice label="Aderenza alla dieta" options={["Sopra il 90%", "70-90%", "Sotto il 70%"]} value={f.adherence} onChange={set("adherence")} />
+      <Choice label="Allenamenti completati" options={["3 su 3", "2 su 3", "1 su 3", "0"]} value={f.sessions} onChange={set("sessions")} />
+      <Choice label="Performance in palestra" options={["Migliorata", "Stabile", "Peggiorata"]} value={f.perf} onChange={set("perf")} />
+      <Scale label="Fame media" value={f.hunger} onChange={set("hunger")} lo="assente" hi="ingestibile" />
+      <Scale label="Energia" value={f.energy} onChange={set("energy")} lo="a terra" hi="ottima" />
+      <Scale label="Qualità del sonno" value={f.sleep} onChange={set("sleep")} lo="pessima" hi="ottima" />
+      <Scale label="Stress percepito" value={f.stress} onChange={set("stress")} lo="nullo" hi="massimo" />
+      <Choice label="Dolore" options={["Nessuno", "Spalla", "Sterno", "Schiena", "Altro"]} value={f.pain} onChange={set("pain")} />
+      <Choice label="Tennis / padel" options={["No", "1 volta", "2+ volte"]} value={f.sport} onChange={set("sport")} />
+    </Card>
+    {tooFast && <Card style={{ borderLeft: `3px solid ${C.signal}` }}><div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 10 }}>CALO RAPIDO</div><Choice label="Hai mangiato meno del previsto?" options={["Sì", "No", "Non so"]} value={f.q_ate_less} onChange={set("q_ate_less")} /></Card>}
+    {stalled && <Card style={{ borderLeft: `3px solid ${C.signal}` }}><div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 10 }}>PESO FERMO</div><Choice label="Pesatura precisa?" options={["Tutto pesato", "Stimato in parte", "Molto stimato"]} value={f.q_precision} onChange={set("q_precision")} /></Card>}
+    {perfDown && <Card style={{ borderLeft: `3px solid ${C.signal}` }}><div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 10 }}>PERFORMANCE</div><TextArea label="Su quali esercizi?" rows={2} value={f.q_whichLifts} onChange={set("q_whichLifts")} /></Card>}
+    {sleepDown && <Card style={{ borderLeft: `3px solid ${C.signal}` }}><div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 10 }}>SONNO</div><Choice label="Allenamenti dopo le 20:00?" options={["Sì", "No"]} value={f.q_lateTraining} onChange={set("q_lateTraining")} /></Card>}
+    {painFlag && <Card style={{ borderLeft: `3px solid ${C.signal}` }}><div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 10 }}>DOLORE</div><Scale label="Intensità" value={f.q_painLevel} onChange={set("q_painLevel")} lo="lieve" hi="forte" /></Card>}
+    {lowAdherence && <Card style={{ borderLeft: `3px solid ${C.signal}` }}><div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 10 }}>ADERENZA</div><Choice label="Cosa ha reso difficile?" options={["Fame", "Eventi sociali", "Tempo", "Motivazione", "Altro"]} value={f.q_adhReason} onChange={set("q_adhReason")} /></Card>}
+    <Card>
+      <TextArea label="Qualcosa che dovrei sapere" rows={4} value={f.notes} onChange={set("notes")} />
+      <Button onClick={save}>Salva check-in</Button>
+    </Card>
+  </>;
+}
+
+/* ============================ MESE ============================ */
+
+function Monthly({ uid, monthlies, setMonthlies, ping }) {
+  const [f, setF] = useState({});
+  const [uploading, setUploading] = useState(false);
+  const [gallery, setGallery] = useState({});
+  const set = (k) => (v) => setF((s) => ({ ...s, [k]: v }));
+
+  const loadGallery = useCallback(async () => {
+    const { data, error } = await sb.from("media_files").select("*").eq("user_id", uid).order("entry_date", { ascending: false });
+    if (error || !data) return;
+    const withUrls = await Promise.all(data.map(async (row) => {
+      const { data: signed } = await sb.storage.from("media").createSignedUrl(row.storage_path, 3600);
+      return { ...row, url: signed?.signedUrl };
+    }));
+    const grouped = {};
+    withUrls.forEach((r) => { grouped[r.entry_date] = [...(grouped[r.entry_date] || []), r]; });
+    setGallery(grouped);
+  }, [uid]);
+
+  useEffect(() => { loadGallery(); }, [loadGallery]);
+
+  const onFiles = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    setUploading(true);
+    const today = todayISO();
+    for (const file of files) {
+      const blob = await compressImage(file);
+      const path = `${uid}/${today}/${Date.now()}_${file.name}.jpg`;
+      const { error } = await sb.storage.from("media").upload(path, blob, { contentType: "image/jpeg" });
+      if (!error) await sb.from("media_files").insert({ user_id: uid, storage_path: path, file_type: "image/jpeg", related_to: "monthly", entry_date: today });
+    }
+    setUploading(false);
+    ping(`${files.length} foto salvate`);
+    await loadGallery();
+    e.target.value = "";
+  };
+
+  const removePhoto = async (row) => {
+    await sb.storage.from("media").remove([row.storage_path]);
+    await sb.from("media_files").delete().eq("id", row.id);
+    await loadGallery();
+  };
+
+  const save = async () => {
+    const row = { user_id: uid, month_date: todayISO(), data: f };
+    const { data: inserted, error } = await sb.from("monthly_checkins").insert(row).select().single();
+    if (error) { ping("Errore: " + error.message); return; }
+    setMonthlies((m) => [...m, { date: inserted.month_date, ...inserted.data }]);
+    ping("Misure salvate"); setF({});
+  };
+
+  const last = monthlies[monthlies.length - 1];
+  const cmp = (k) => { const prev = last?.[k] ?? BASE_MEASURE[k]; const now = Number(f[k]); if (!now || !prev) return null; const d = now - prev; return `${d > 0 ? "+" : ""}${d.toFixed(1)}`; };
+  const galleryDates = Object.keys(gallery).sort().reverse();
+
+  return (
+    <>
+      <Eyebrow n="04">Composizione corporea · ogni 4 settimane</Eyebrow>
+      <Card>
+        <div style={{ fontFamily: SANS, fontSize: 13, color: C.muted, marginBottom: 16 }}>Sempre la mattina a digiuno, muscolo rilassato, stesso punto di misura.</div>
+        {[["chest","Torace","all'altezza dei capezzoli"],["waist","Vita","all'ombelico"],["hips","Fianchi","punto più largo"],["armL","Braccio sinistro","a metà"],["armR","Braccio destro","a metà"],["thighL","Coscia sinistra","a metà"],["thighR","Coscia destra","a metà"]].map(([k, label, hint]) => (
+          <div key={k}><Field label={`${label} — ${hint}`} unit="cm" step="0.1" value={f[k]} onChange={set(k)} placeholder={String(BASE_MEASURE[k])} />
+          {cmp(k) && <div style={{ fontFamily: MONO, fontSize: 11, color: C.muted, marginTop: -10, marginBottom: 12 }}>{cmp(k)} cm dall'ultima misura</div>}</div>
+        ))}
+      </Card>
+      <Card style={{ borderLeft: `3px solid ${C.ink}` }}>
+        <div style={{ fontFamily: MONO, fontSize: 11, color: C.muted, marginBottom: 10 }}>FOTO E VIDEO — private, salvate su Supabase</div>
+        <input type="file" accept="image/*" multiple onChange={onFiles} style={{ fontFamily: SANS, fontSize: 13, marginBottom: 10, color: C.ink }} />
+        {uploading && <div style={{ fontFamily: MONO, fontSize: 11, color: C.muted }}>caricamento…</div>}
+        {galleryDates.map((date) => (
+          <div key={date} style={{ marginTop: 14 }}>
+            <div style={{ fontFamily: MONO, fontSize: 11, color: C.muted, marginBottom: 8 }}>{date}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
+              {gallery[date].map((row) => (
+                <div key={row.id} style={{ position: "relative" }}>
+                  {row.url && <img src={row.url} style={{ width: "100%", aspectRatio: "1", objectFit: "cover", border: `1px solid ${C.rule}` }} />}
+                  <button onClick={() => removePhoto(row)} style={{ position: "absolute", top: 2, right: 2, background: C.paper, border: `1px solid ${C.rule}`, color: C.signal, fontSize: 10, width: 18, height: 18, cursor: "pointer", padding: 0 }}>×</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </Card>
+      <Card>
+        <Choice label="Allo specchio" options={["Meglio", "Uguale", "Peggio", "Non so dire"]} value={f.mirror} onChange={set("mirror")} />
+        <Choice label="Vestiti" options={["Più larghi", "Uguali", "Più stretti"]} value={f.clothes} onChange={set("clothes")} />
+        <Scale label="Soddisfazione del mese" value={f.satisfaction} onChange={set("satisfaction")} lo="nulla" hi="massima" />
+        <TextArea label="Cambiamenti rilevanti" rows={4} value={f.changes} onChange={set("changes")} />
+        <Button onClick={save}>Salva misure del mese</Button>
+      </Card>
+    </>
+  );
+}
+
+/* ========================== FINE CICLO ========================== */
+
+function Cycle({ uid, cycles, setCycles, ping }) {
+  const [f, setF] = useState({});
+  const set = (k) => (v) => setF((s) => ({ ...s, [k]: v }));
+  const save = async () => {
+    const row = { user_id: uid, cycle_date: todayISO(), data: f };
+    const { data: inserted, error } = await sb.from("cycle_reviews").insert(row).select().single();
+    if (error) { ping("Errore: " + error.message); return; }
+    setCycles((c) => [...c, { date: inserted.cycle_date, ...inserted.data }]);
+    ping("Review salvata"); setF({});
+  };
+  return <>
+    <Eyebrow n="05">Review di fine ciclo · ogni 8 settimane</Eyebrow>
+    <Card>
+      <Field label="Peso iniziale" unit="kg" step="0.1" value={f.startWeight} onChange={set("startWeight")} />
+      <Field label="Peso finale" unit="kg" step="0.1" value={f.endWeight} onChange={set("endWeight")} />
+      <Choice label="Forza nel ciclo" options={["Aumentata", "Mantenuta", "Calata poco", "Calata molto"]} value={f.strength} onChange={set("strength")} />
+      <Choice label="Aspetto vs inizio" options={["Nettamente meglio", "Un po' meglio", "Uguale", "Peggio"]} value={f.look} onChange={set("look")} />
+    </Card>
+    <Card>
+      <TextArea label="Cosa ha funzionato" rows={3} value={f.worked} onChange={set("worked")} />
+      <TextArea label="Cosa non ha funzionato" rows={3} value={f.notWorked} onChange={set("notWorked")} />
+      <Choice label="Prossima fase" options={["Continuare a perdere", "Fermarmi e mantenere", "Non so, decidi tu"]} value={f.nextPhase} onChange={set("nextPhase")} />
+      <TextArea label="Domande per me" rows={3} value={f.questions} onChange={set("questions")} />
+      <Button onClick={save}>Salva review</Button>
+    </Card>
+  </>;
+}
+
+/* ============================ PIANO ============================ */
+
+function Piano() {
+  const [open, setOpen] = useState("A");
+  return <>
+    <Eyebrow n="06">Piano · Ciclo 1</Eyebrow>
+    <Card>
+      <Readout name="Calorie" value={TARGET.kcal} unit="kcal" range="giorni normali" />
+      <Readout name="Calorie refeed" value={TARGET.kcalRefeed} unit="kcal" range="1 sett./4" />
+      <Readout name="Proteine" value={TARGET.prot} unit="g" range="" />
+      <Readout name="Carboidrati" value={TARGET.carb} unit="g" range="" />
+      <Readout name="Grassi" value={TARGET.fat} unit="g" range="" />
+    </Card>
+    <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+      {["A", "B", "C"].map((k) => <button key={k} onClick={() => setOpen(k)} style={{ flex: 1, fontFamily: SANS, fontSize: 13, fontWeight: 700, padding: "12px 0", border: `1px solid ${open === k ? C.ink : C.rule}`, background: open === k ? C.ink : C.card, color: open === k ? C.card : C.ink, cursor: "pointer", borderRadius: 0 }}>{k}</button>)}
+    </div>
+    <Card>
+      <div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 14, textTransform: "uppercase" }}>{WORKOUTS[open].name}</div>
+      {WORKOUTS[open].ex.map(([name, sets, note], i) => (
+        <div key={i} style={{ padding: "11px 0", borderBottom: `1px solid ${C.wash}` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+            <span style={{ fontFamily: SANS, fontSize: 14, fontWeight: 600 }}>{name}</span>
+            <span style={{ fontFamily: MONO, fontSize: 13, whiteSpace: "nowrap" }}>{sets}</span>
+          </div>
+          {note && <div style={{ fontFamily: SANS, fontSize: 12, color: C.muted, marginTop: 3 }}>{note}</div>}
+        </div>
+      ))}
+    </Card>
+  </>;
+}
+
+/* ============================ COACH ============================ */
+
+function Coach({ coachNotes }) {
+  return <>
+    <Eyebrow n="07">Le mie valutazioni</Eyebrow>
+    {coachNotes.length === 0 ? <Card><div style={{ fontFamily: SANS, fontSize: 13, color: C.muted }}>Ancora nessuna.</div></Card> :
+      coachNotes.map((n, i) => (
+        <Card key={i}>
+          <div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, textTransform: "uppercase", marginBottom: 10 }}>{n.kind} · {n.note_date}</div>
+          <div style={{ fontFamily: SANS, fontSize: 13.5, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{n.content}</div>
+        </Card>
+      ))}
+  </>;
+}
+
+/* =========================== EXPORT =========================== */
+
+function Exporter({ daily, weeklies, monthlies, workouts, thisWeek, lastWeek, weekDelta, avgMacro, ping }) {
+  const [text, setText] = useState("");
+  const [kind, setKind] = useState("");
+
+  const workoutWindow = (which) => {
+    const back = which === "Settimanale" ? 7 : which === "Mensile" ? 30 : 56;
+    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - back);
+    return Object.keys(workouts || {}).filter((d) => new Date(d) >= cutoff).sort();
+  };
+
+  const build = (which) => {
+    const L = [];
+    L.push(`COACHING REPORT — ${which.toUpperCase()}`, `Data: ${todayISO()}`, "");
+    L.push("— PESO —");
+    L.push(`Media 7 gg: ${thisWeek ? fmt(thisWeek.avg, 2) + " kg" : "insufficiente"}`);
+    L.push(`Variazione: ${weekDelta !== null ? (weekDelta > 0 ? "+" : "") + fmt(weekDelta, 2) + " kg" : "—"}`, "");
+    L.push("— NUTRIZIONE (medie 7 gg) —");
+    L.push(`Calorie: ${fmt(avgMacro("kcal"), 0)} (target ${TARGET.kcal})`);
+    L.push(`Proteine: ${fmt(avgMacro("prot"), 0)} g (target ${TARGET.prot})`, "");
+
+    const wDates = workoutWindow(which);
+    if (wDates.length) {
+      L.push("— ALLENAMENTI —");
+      wDates.forEach((d) => {
+        const sess = workouts[d];
+        L.push(`${d} · Scheda ${sess.letter}`);
+        Object.entries(sess.sets || {}).forEach(([name, sets]) => {
+          const done = (sets || []).filter((s) => s.weight || s.reps).map((s) => `${s.weight || "?"}kg×${s.reps || "?"}`).join(", ");
+          if (done) L.push(`  ${name}: ${done}`);
+        });
+      });
+      L.push("");
+    }
+    L.push("— FINE REPORT —");
+    return L.join("\n");
+  };
+
+  const generate = (which) => { setKind(which); setText(build(which)); };
+  const copy = async () => { try { await navigator.clipboard.writeText(text); ping("Copiato"); } catch { ping("Copialo a mano"); } };
+
+  return (
+    <>
+      <Eyebrow n="08">Esporta</Eyebrow>
+      <Card>
+        <div style={{ fontFamily: SANS, fontSize: 13, color: C.muted, marginBottom: 16 }}>Genera, copia, incolla in chat.</div>
+        <div style={{ display: "grid", gap: 8 }}>
+          <Button variant="outline" onClick={() => generate("Settimanale")}>Report settimanale</Button>
+          <Button variant="outline" onClick={() => generate("Mensile")}>Report mensile</Button>
+          <Button variant="outline" onClick={() => generate("Fine ciclo")}>Report di fine ciclo</Button>
+        </div>
+      </Card>
+      {text && <Card>
+        <div style={{ fontFamily: MONO, fontSize: 11, color: C.muted, marginBottom: 10 }}>{kind.toUpperCase()}</div>
+        <textarea readOnly value={text} rows={16} style={{ width: "100%", fontFamily: MONO, fontSize: 12, lineHeight: 1.55, padding: 12, border: `1px solid ${C.rule}`, background: C.paper, color: C.ink, boxSizing: "border-box", resize: "vertical", borderRadius: 0 }} />
+        <div style={{ marginTop: 12 }}><Button onClick={copy}>Copia negli appunti</Button></div>
+      </Card>}
+    </>
+  );
+}
+
+/* ============================ APP ============================ */
+
+function App({ session }) {
+  const uid = session.user.id;
+  const [view, setView] = useState("home");
+  const [ready, setReady] = useState(false);
+  const [toast, setToast] = useState("");
+  const [themeName, setThemeName] = useState("dark");
+  const [daily, setDaily] = useState({});
+  const [weeklies, setWeeklies] = useState([]);
+  const [monthlies, setMonthlies] = useState([]);
+  const [cycles, setCycles] = useState([]);
+  const [coachNotes, setCoachNotes] = useState([]);
+  const [workouts, setWorkouts] = useState({});
+
+  const ping = useCallback((m) => { setToast(m); setTimeout(() => setToast(""), 2400); }, []);
+  const toggleTheme = () => { const next = themeName === "dark" ? "light" : "dark"; C = PALETTES[next]; setThemeName(next); localStorage.setItem("theme-pref", next); };
+
+  const loadAll = useCallback(async () => {
+    const [d, w, m, c, cn, wk] = await Promise.all([
+      sb.from("daily_logs").select("*").eq("user_id", uid).order("log_date"),
+      sb.from("weekly_checkins").select("*").eq("user_id", uid).order("week_date"),
+      sb.from("monthly_checkins").select("*").eq("user_id", uid).order("month_date"),
+      sb.from("cycle_reviews").select("*").eq("user_id", uid).order("cycle_date"),
+      sb.from("coach_notes").select("*").eq("user_id", uid).order("note_date", { ascending: false }),
+      sb.from("workout_sessions").select("*").eq("user_id", uid).order("session_date"),
+    ]);
+    const dmap = {}; (d.data || []).forEach((r) => { dmap[r.log_date] = r; });
+    setDaily(dmap);
+    setWeeklies((w.data || []).map((r) => ({ date: r.week_date, ...r.data })));
+    setMonthlies((m.data || []).map((r) => ({ date: r.month_date, ...r.data })));
+    setCycles((c.data || []).map((r) => ({ date: r.cycle_date, ...r.data })));
+    setCoachNotes(cn.data || []);
+    const wmap = {}; (wk.data || []).forEach((r) => { wmap[r.session_date] = { letter: r.letter, sets: r.sets, notes: r.notes, extra: r.extra }; });
+    setWorkouts(wmap);
+    const savedTheme = localStorage.getItem("theme-pref") || "dark";
+    C = PALETTES[savedTheme]; setThemeName(savedTheme);
+    setReady(true);
+  }, [uid]);
+
+  useEffect(() => { loadAll(); }, [loadAll]);
+
+  const sortedDays = Object.keys(daily).sort();
+  const weeklyAvg = (weeksBack = 0) => {
+    const end = new Date(todayISO()); end.setDate(end.getDate() - weeksBack * 7);
+    const start = new Date(end); start.setDate(start.getDate() - 6);
+    const vals = sortedDays.filter((k) => { const dt = new Date(k); return dt >= start && dt <= end && daily[k]?.weight; }).map((k) => Number(daily[k].weight));
+    return vals.length ? { avg: vals.reduce((a, b) => a + b, 0) / vals.length, n: vals.length } : null;
+  };
+  const thisWeek = weeklyAvg(0);
+  const lastWeek = weeklyAvg(1);
+  const weekDelta = thisWeek && lastWeek ? thisWeek.avg - lastWeek.avg : null;
+  const avgMacro = (field, days = 7) => {
+    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - (days - 1));
+    const vals = sortedDays.filter((k) => new Date(k) >= cutoff && daily[k]?.[field]).map((k) => Number(daily[k][field]));
+    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+  };
+
+  if (!ready) return <div style={{ minHeight: "100vh", background: C.paper, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: MONO, fontSize: 12, color: C.muted }}>caricamento dati…</div>;
+
+  const shared = { uid, daily, setDaily, weeklies, setWeeklies, monthlies, setMonthlies, cycles, setCycles, coachNotes, workouts, setWorkouts, ping, thisWeek, lastWeek, weekDelta, avgMacro, sortedDays };
+  const todayEntry = daily[todayISO()];
+  const todayWorkout = workouts[todayISO()];
+  const preview = {
+    oggi: todayEntry?.weight ? `${todayEntry.weight} kg oggi` : "Non ancora oggi",
+    allenamento: todayWorkout ? `oggi: scheda ${todayWorkout.letter}` : `${Object.keys(workouts).length} sessioni`,
+    storico: `${sortedDays.length} giorni`,
+    grafici: thisWeek ? `media ${fmt(thisWeek.avg, 1)} kg` : "poco storico",
+    settimana: weeklies.length ? `ultimo ${weeklies[weeklies.length - 1].date}` : "nessuno ancora",
+    mese: monthlies.length ? `ultimo ${monthlies[monthlies.length - 1].date}` : "nessuno ancora",
+    ciclo: `${cycles.length} chiusi`,
+    piano: "Ciclo 1 attivo",
+    coach: `${coachNotes.length} valutazioni`,
+    export: "genera report",
+    guida: "come funziona",
+  };
+  const current = SECTIONS.find((s) => s.key === view);
+
+  return (
+    <div style={{ minHeight: "100vh", background: C.paper, color: C.ink, fontFamily: SANS, paddingBottom: 90 }}>
+      <div style={{ borderBottom: `1px solid ${C.rule}`, background: C.card, padding: "14px 16px" }}>
+        {view === "home" ? (
+          <>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+              <h1 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Athlete Log</h1>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontFamily: MONO, fontSize: 10, color: C.muted }}>{sortedDays.length} GG</span>
+                <button onClick={toggleTheme} style={{ border: `1px solid ${C.rule}`, background: "none", borderRadius: 999, width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: C.ink }}>{themeName === "dark" ? <Sun size={14} /> : <Moon size={14} />}</button>
+                <button onClick={() => sb.auth.signOut()} style={{ border: `1px solid ${C.rule}`, background: "none", borderRadius: 999, width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: C.ink }}><LogOut size={13} /></button>
+              </div>
+            </div>
+            <div style={{ fontFamily: MONO, fontSize: 10, color: C.muted, marginTop: 3 }}>MATTHEW · 172 CM · TARGET {TARGET.kcal} KCAL</div>
+          </>
+        ) : (
+          <button onClick={() => setView("home")} style={{ display: "flex", alignItems: "center", gap: 6, border: "none", background: "none", color: C.ink, cursor: "pointer", padding: 0 }}>
+            <ChevronLeft size={18} /><span style={{ fontFamily: SANS, fontSize: 15, fontWeight: 700 }}>{current?.label}</span>
+          </button>
+        )}
+      </div>
+
+      <div style={{ padding: 16, maxWidth: 680, margin: "0 auto" }}>
+        {view === "home" && <Home go={setView} preview={preview} />}
+        {view === "guida" && <Guida go={setView} />}
+        {view === "oggi" && <Daily {...shared} />}
+        {view === "allenamento" && <Allenamento {...shared} />}
+        {view === "storico" && <Storico {...shared} />}
+        {view === "grafici" && <Charts {...shared} />}
+        {view === "settimana" && <Weekly {...shared} />}
+        {view === "mese" && <Monthly {...shared} />}
+        {view === "ciclo" && <Cycle {...shared} />}
+        {view === "piano" && <Piano />}
+        {view === "coach" && <Coach {...shared} />}
+        {view === "export" && <Exporter {...shared} />}
+      </div>
+
+      <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: C.card, borderTop: `1px solid ${C.rule}`, display: "flex", justifyContent: "space-around", padding: "10px 0 max(10px, env(safe-area-inset-bottom))" }}>
+        {[{ key: "home", label: "Home", icon: HomeIcon }, { key: "oggi", label: "Oggi", icon: CalendarDays }, { key: "allenamento", label: "Allen.", icon: Dumbbell }, { key: "coach", label: "Coach", icon: MessagesSquare }].map(({ key, label, icon: Icon }) => {
+          const active = view === key;
+          return <button key={key} onClick={() => setView(key)} style={{ background: "none", border: "none", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, cursor: "pointer", color: active ? C.signal : C.muted, padding: "2px 14px" }}>
+            <Icon size={19} strokeWidth={active ? 2.25 : 1.75} /><span style={{ fontFamily: SANS, fontSize: 10, fontWeight: active ? 700 : 500 }}>{label}</span>
+          </button>;
+        })}
+      </div>
+      {toast && <div style={{ position: "fixed", bottom: 76, left: "50%", transform: "translateX(-50%)", background: C.ink, color: C.card, fontFamily: MONO, fontSize: 12, padding: "11px 18px", zIndex: 50 }}>{toast}</div>}
+    </div>
+  );
+}
+
+function Root() {
+  return <AuthGate>{(session) => <App session={session} />}</AuthGate>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
+</script>
+</body>
+</html>
