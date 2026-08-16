@@ -46,7 +46,9 @@ try {
 
 const SUPABASE_URL = "https://ifsekymivoitcqvoywbh.supabase.co";
 const SUPABASE_KEY = "sb_publishable_vVxzbIyX2GtNP0V3P-43QQ_S2ixDS47";
-const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+  global: { fetch: (...args) => window.fetch(...args) },
+});
 
 const { useState, useEffect, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } = Recharts;
@@ -179,10 +181,10 @@ const cellInput = { fontFamily: MONO, fontSize: 15, padding: "9px 8px", border: 
 function AuthGate({ children }) {
   const [session, setSession] = useState(undefined);
   const [mode, setMode] = useState("signin");
-  const [email, setEmail] = useState("");
-  const [pw, setPw] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
+  const emailRef = React.useRef(null);
+  const pwRef = React.useRef(null);
 
   useEffect(() => {
     sb.auth.getSession().then(({ data }) => setSession(data.session));
@@ -194,6 +196,9 @@ function AuthGate({ children }) {
   if (session) return children(session);
 
   const submit = async () => {
+    const email = (emailRef.current?.value || "").trim();
+    const pw = pwRef.current?.value || "";
+    if (!email || !pw) { setMsg("Inserisci email e password"); return; }
     setBusy(true); setMsg("");
     const fn = mode === "signin" ? sb.auth.signInWithPassword : sb.auth.signUp;
     const { error } = await fn({ email, password: pw });
@@ -202,15 +207,23 @@ function AuthGate({ children }) {
     else if (mode === "signup") setMsg("Account creato. Controlla la mail per confermare, poi accedi.");
   };
 
+  const inputStyle = { width: "100%", fontFamily: MONO, fontSize: 17, padding: "11px 12px", border: `1px solid ${C.rule}`, background: C.paper, color: C.ink, outline: "none", boxSizing: "border-box", borderRadius: 0 };
+
   return <div style={{ minHeight: "100vh", background: C.paper, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
     <div style={{ width: "100%", maxWidth: 340 }}>
       <div style={{ fontFamily: SANS, fontSize: 20, fontWeight: 800, marginBottom: 4, textAlign: "center", color: C.ink }}>Athlete Log</div>
       <div style={{ fontFamily: MONO, fontSize: 11, color: C.muted, textAlign: "center", marginBottom: 24 }}>accesso privato</div>
       <Card>
-        <Field label="Email" type="email" value={email} onChange={setEmail} placeholder="tu@mail.com" />
-        <Field label="Password" type="password" value={pw} onChange={setPw} placeholder="••••••••" />
+        <label style={{ display: "block", marginBottom: 14 }}>
+          <Label>Email</Label>
+          <input ref={emailRef} type="email" defaultValue="" placeholder="tu@mail.com" style={inputStyle} />
+        </label>
+        <label style={{ display: "block", marginBottom: 14 }}>
+          <Label>Password</Label>
+          <input ref={pwRef} type="password" defaultValue="" placeholder="••••••••" style={inputStyle} />
+        </label>
         {msg && <div style={{ fontFamily: SANS, fontSize: 12, color: C.signal, marginBottom: 12, lineHeight: 1.5 }}>{msg}</div>}
-        <Button onClick={submit} disabled={busy || !email || !pw}>{mode === "signin" ? "Accedi" : "Crea account"}</Button>
+        <Button onClick={submit} disabled={busy}>{mode === "signin" ? "Accedi" : "Crea account"}</Button>
         <div style={{ textAlign: "center", marginTop: 14 }}>
           <button onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setMsg(""); }}
             style={{ border: "none", background: "none", fontFamily: SANS, fontSize: 12, color: C.muted, textDecoration: "underline", cursor: "pointer" }}>
