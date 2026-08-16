@@ -205,8 +205,9 @@ function AuthGate({ children }) {
     const pw = pwRef.current?.value || "";
     if (!email || !pw) { setMsg("Inserisci email e password"); return; }
     setBusy(true); setMsg("");
-    const fn = mode === "signin" ? sb.auth.signInWithPassword : sb.auth.signUp;
-    const { error } = await fn({ email, password: pw });
+    const { error } = mode === "signin"
+      ? await sb.auth.signInWithPassword({ email, password: pw })
+      : await sb.auth.signUp({ email, password: pw });
     setBusy(false);
     if (error) setMsg(error.message);
     else if (mode === "signup") setMsg("Account creato. Controlla la mail per confermare, poi accedi.");
