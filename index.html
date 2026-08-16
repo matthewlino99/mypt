@@ -15,13 +15,28 @@
 </style>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 <script src="https://unpkg.com/recharts@2/umd/Recharts.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
 <body>
 <div id="root"></div>
+<script>
+  window.addEventListener("error", function (e) {
+    var root = document.getElementById("root");
+    if (root && !root.hasChildNodes()) {
+      root.innerHTML =
+        '<div style="padding:24px;font-family:ui-monospace,monospace;color:#F3F4F6;background:#0B0C0E;min-height:100vh;box-sizing:border-box;">' +
+        '<h2 style="color:#FF6259;font-family:-apple-system,sans-serif;">Errore di caricamento</h2>' +
+        '<div style="color:#8B909A;font-family:-apple-system,sans-serif;margin-bottom:16px;">Fai uno screenshot di questo messaggio e mandalo in chat.</div>' +
+        '<pre style="white-space:pre-wrap;word-break:break-word;font-size:13px;">' +
+        (e && e.message ? e.message : "Errore sconosciuto") +
+        '</pre></div>';
+    }
+  });
+</script>
 <script type="text/babel" data-presets="react">
+try {
 
 /* ============================================================
    ATHLETE LOG — webapp autonoma, Supabase come database
@@ -1008,6 +1023,18 @@ function Root() {
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
+
+} catch (err) {
+  document.getElementById("root").innerHTML =
+    '<div style="padding:24px;font-family:ui-monospace,monospace;color:#F3F4F6;background:#0B0C0E;min-height:100vh;box-sizing:border-box;">' +
+    '<h2 style="color:#FF6259;font-family:-apple-system,sans-serif;">Errore di caricamento</h2>' +
+    '<div style="color:#8B909A;font-family:-apple-system,sans-serif;margin-bottom:16px;">Fai uno screenshot di questo messaggio e mandalo in chat.</div>' +
+    '<pre style="white-space:pre-wrap;word-break:break-word;font-size:13px;">' +
+    (err && err.message ? err.message : String(err)) +
+    '</pre></div>';
+  console.error(err);
+}
+
 </script>
 </body>
 </html>
