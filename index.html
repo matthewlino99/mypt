@@ -16,13 +16,14 @@
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
-<script src="https://unpkg.com/@supabase/supabase-js@2.45.3/dist/umd/supabase.js"></script>
 <script src="https://unpkg.com/recharts@2/umd/Recharts.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
 <body>
 <div id="root"></div>
 <script>
+  window.SUPABASE_URL = "https://ifsekymivoitcqvoywbh.supabase.co";
+  window.SUPABASE_KEY = "sb_publishable_vVxzbIyX2GtNP0V3P-43QQ_S2ixDS47";
   window.addEventListener("error", function (e) {
     var root = document.getElementById("root");
     if (root && !root.hasChildNodes()) {
@@ -36,6 +37,13 @@
     }
   });
 </script>
+<script type="module">
+  import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+  window.sb = createClient(window.SUPABASE_URL, window.SUPABASE_KEY, {
+    auth: { storage: window.localStorage, persistSession: true, autoRefreshToken: true },
+  });
+  window.dispatchEvent(new Event("sb-ready"));
+</script>
 <script type="text/plain" id="app-source">
 try {
 
@@ -44,12 +52,9 @@ try {
    Referto di laboratorio: ogni valore ha un range, fuori range = + o −
    ============================================================ */
 
-const SUPABASE_URL = "https://ifsekymivoitcqvoywbh.supabase.co";
-const SUPABASE_KEY = "sb_publishable_vVxzbIyX2GtNP0V3P-43QQ_S2ixDS47";
-const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
-  auth: { storage: window.localStorage, persistSession: true, autoRefreshToken: true },
-  global: { fetch: (...args) => window.fetch(...args) },
-});
+const SUPABASE_URL = window.SUPABASE_URL;
+const SUPABASE_KEY = window.SUPABASE_KEY;
+const sb = window.sb;
 
 const { useState, useEffect, useCallback, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } = Recharts;
@@ -1052,7 +1057,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
 
 </script>
 <script>
-(function () {
+function runApp() {
   try {
     var src = document.getElementById("app-source").textContent;
     var out = Babel.transform(src, { presets: [["react", { runtime: "classic" }]] }).code;
@@ -1069,7 +1074,8 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
       '</pre></div>';
     console.error(e);
   }
-})();
+}
+if (window.sb) { runApp(); } else { window.addEventListener("sb-ready", runApp, { once: true }); }
 </script>
 </body>
 </html>
