@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>Test Login</title>
+</head>
+<body style="font-family:monospace; padding:24px; background:#111; color:#fff;">
+<h2>Test isolato login Supabase</h2>
+<div>
+  <input id="email" placeholder="email" style="display:block;margin-bottom:8px;padding:8px;width:280px;" value="spidalieri.matthew@icloud.com">
+  <input id="pw" type="password" placeholder="password" style="display:block;margin-bottom:8px;padding:8px;width:280px;">
+  <button id="go" style="padding:8px 16px;">Prova login</button>
+</div>
+<pre id="out" style="margin-top:16px; white-space:pre-wrap; word-break:break-word; background:#222; padding:12px;"></pre>
+
+<script type="module">
+  import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+
+  const out = document.getElementById("out");
+  const log = (msg) => { out.textContent += msg + "\n"; console.log(msg); };
+
+  log("1. Import completato.");
+
+  const sb = createClient(
+    "https://ifsekymivoitcqvoywbh.supabase.co",
+    "sb_publishable_vVxzbIyX2GtNP0V3P-43QQ_S2ixDS47"
+  );
+
+  log("2. Client creato: " + typeof sb);
+  log("3. sb.auth esiste? " + typeof sb.auth);
+  log("4. window.fetch esiste? " + typeof window.fetch);
+
+  document.getElementById("go").addEventListener("click", async () => {
+    const email = document.getElementById("email").value;
+    const password = document.getElementById("pw").value;
+    log("5. Provo il login con: " + email);
+    try {
+      const result = await sb.auth.signInWithPassword({ email, password });
+      log("6. RISULTATO: " + JSON.stringify(result, null, 2));
+    } catch (err) {
+      log("6. ERRORE CATTURATO: " + (err && err.stack ? err.stack : String(err)));
+    }
+  });
+</script>
+</body>
+</html>
