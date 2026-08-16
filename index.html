@@ -40,6 +40,7 @@
 <script type="module">
   import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
   window.sb = createClient(window.SUPABASE_URL, window.SUPABASE_KEY);
+  await window.sb.auth.getSession();
   window.dispatchEvent(new Event("sb-ready"));
 </script>
 <script type="text/plain" id="app-source">
