@@ -87,8 +87,15 @@ let C = PALETTES.dark;
 const MONO = 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace';
 const SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
 
-const TARGET = { kcal: 1850, kcalRefeed: 2100, prot: 110, carb: 195, fat: 70, weeklyLossMin: 0.15, weeklyLossMax: 0.6 };
-const BASE_MEASURE = { chest: 106.5, waist: 90, hips: 103, armR: 36.5, armL: 37.5, thighR: 56.5, thighL: 55 };
+const TARGET = { kcal: 2000, prot: 110, carb: 230, fat: 70, weeklyLossMin: 0.15, weeklyLossMax: 0.6 };
+const CYCLE_START = "2026-11-03";
+const CYCLE_LABEL = "Ciclo 2";
+const CYCLE_WEEKS = 12;
+const MEASURE_FROM_WEEK = 4;
+const weekOf = (iso) => Math.max(1, Math.floor((new Date(iso) - new Date(CYCLE_START)) / 86400000 / 7) + 1);
+const phaseOf = (week) => week <= 2
+  ? { name: "Calibrazione · mantenimento", range: "±0.30", flags: false }
+  : { name: "Fase attiva", range: "−0.15…−0.60", flags: true };
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmt = (n, d = 1) => (n === null || n === undefined || Number.isNaN(n)) ? "—" : Number(n).toFixed(d);
@@ -243,13 +250,37 @@ function AuthGate({ children }) {
 
 /* ============================ WORKOUT PLAN DATA ============================ */
 
+// [nome, reps, principale(true = composto: 2 serie sett.1, 3 dalla sett.2), nota]
 const WORKOUTS = {
-  A: { name: "Workout A · focus spinta", ex: [["Leg press","3 × 8-10","Piedi a media altezza"],["Chest press macchina o panca inclinata","3 × 8-10","Sostituisce le dips"],["Lat machine presa neutra","3 × 8-10",""],["Leg curl seduto","3 × 10-12",""],["Alzate laterali manubri","3 × 12-15","Solo manubri, mai cavo basso"],["Curl manubri alternato","2 × 8-10",""],["Pushdown corda","2 × 10-12",""]] },
-  B: { name: "Workout B · focus trazione", ex: [["Hack squat (o leg press piedi alti)","3 × 8-10","Nessun bilanciere sulla schiena"],["Rematore macchina presa neutra","3 × 8-10",""],["Chest press, angolo diverso da A","3 × 8-10",""],["Hyperextension","3 × 10-12","Controllata"],["Pull-up assistite o lat machine larga","2 × 6-8",""],["Alzate laterali manubri","2 × 12-15",""],["French press o pushdown","2 × 10-12",""]] },
-  C: { name: "Workout C · gambe e braccia", ex: [["Leg extension","3 × 10-12",""],["Leg curl sdraiato","3 × 10-12",""],["Chest press o croci ai cavi","2 × 10-12",""],["Rematore singolo manubrio","3 × 8-10",""],["Face pull o reverse fly","2 × 12-15","Aiuta i deltoidi posteriori"],["Prayer curl o bayesian curl","2 × 8-10",""],["Skull crusher o pushdown","2 × 10-12",""]] },
+  A: { name: "Workout A · gambe e spinta", ex: [
+    ["Leg press", "8-10", true, "Piedi a media altezza. Ultima serie RIR 1."],
+    ["Chest press", "8-10", true, "Alt.: panca inclinata manubri. Ultima serie RIR 1."],
+    ["Lat machine presa neutra", "8-10", true, "Ultima serie RIR 1."],
+    ["Leg curl seduto", "10-12", false, ""],
+    ["Alzate laterali manubri", "12-15", false, "Solo manubri, mai cavo basso"],
+    ["Curl manubri", "10-12", false, ""],
+    ["Pushdown corda", "10-12", false, ""],
+  ] },
+  B: { name: "Workout B · trazione e gambe", ex: [
+    ["Hack squat", "8-10", true, "Alt.: leg press piedi alti. Nessun bilanciere sulla schiena. Ultima serie RIR 1."],
+    ["Rematore macchina presa neutra", "8-10", true, "Alt.: rematore ai cavi presa neutra. Ultima serie RIR 1."],
+    ["Chest press angolo diverso", "8-10", true, "Angolo diverso da A. Alt.: croci ai cavi. Ultima serie RIR 1."],
+    ["Hyperextension", "10-12", false, "Controllata"],
+    ["Lat machine larga", "8-10", true, "Alt.: pull-up assistite. Ultima serie RIR 1."],
+    ["Face pull", "12-15", false, "Aiuta i deltoidi posteriori"],
+    ["French press manubrio", "10-12", false, ""],
+  ] },
+  C: { name: "Workout C · gambe e dettaglio", ex: [
+    ["Leg extension", "10-12", false, ""],
+    ["Leg curl sdraiato", "10-12", false, ""],
+    ["Rematore a un braccio", "8-10", true, "Ultima serie RIR 1."],
+    ["Croci ai cavi", "10-12", false, "Alt.: chest press macchina"],
+    ["Alzate laterali manubri", "12-15", false, "Solo manubri, mai cavo basso"],
+    ["Curl bayesian", "10-12", false, "Alt.: prayer curl"],
+    ["Skull crusher", "10-12", false, "Alt.: pushdown"],
+  ] },
 };
-const parseTargetSets = (spec) => parseInt(spec) || 3;
-const parseRepsRange = (spec) => (spec.split("×")[1] || "").trim();
+const setsFor = (main, week) => main ? (week <= 1 ? 2 : 3) : 2;
 
 function bestSet(sets) {
   return (sets || []).reduce((best, s) => {
@@ -283,8 +314,8 @@ const SECTIONS = [
   { key: "storico", label: "Storico", icon: History, desc: "Tutte le giornate" },
   { key: "grafici", label: "Grafici", icon: LineChartIcon, desc: "Trend nel tempo" },
   { key: "settimana", label: "Settimana", icon: ClipboardList, desc: "Check-in settimanale" },
-  { key: "mese", label: "Mese", icon: Ruler, desc: "Circonferenze e foto" },
-  { key: "ciclo", label: "Fine ciclo", icon: FlagTriangleRight, desc: "Bilancio 8 settimane" },
+  { key: "mese", label: "Mese", icon: Ruler, desc: "Foto e misure (da sett. 4)" },
+  { key: "ciclo", label: "Fine ciclo", icon: FlagTriangleRight, desc: "Bilancio a 6 e 12 sett." },
   { key: "piano", label: "Piano", icon: ListChecks, desc: "Scheda e macro attuali" },
   { key: "coach", label: "Coach", icon: MessagesSquare, desc: "Le mie valutazioni" },
   { key: "export", label: "Export", icon: Send, desc: "Report da mandare in chat" },
@@ -336,8 +367,8 @@ function Guida({ go }) {
       <Step n="2" title="Nei giorni di allenamento">{link("Allenamento", "allenamento")}: scegli la scheda, registri peso e reps serie per serie. I record si aggiornano da soli in {link("Storico", "storico")}.</Step>
       <Step n="3" title="Ogni domenica">{link("Settimana", "settimana")}: check-in adattivo.</Step>
       <Step n="4" title="Parli con me">{link("Export", "export")} genera il report, lo incolli in chat.</Step>
-      <Step n="5" title="Ogni 4 settimane">{link("Mese", "mese")}: circonferenze, percezione, foto private.</Step>
-      <Step n="6" title="Ogni 8 settimane">{link("Fine ciclo", "ciclo")}: il bilancio lungo.</Step>
+      <Step n="5" title="Dalla settimana 4">{link("Mese", "mese")}: circonferenze, percezione, foto private (le foto puoi caricarle già ora).</Step>
+      <Step n="6" title="Checkpoint a sett. 6 e 12">{link("Fine ciclo", "ciclo")}: il bilancio lungo.</Step>
       <Step n="7" title="Le mie valutazioni">Le trovi in {link("Coach", "coach")}.</Step>
     </Card>
   </>;
@@ -365,25 +396,25 @@ function Daily({ uid, daily, setDaily, ping, thisWeek, weekDelta, avgMacro }) {
     <Eyebrow n="01">Registrazione giornaliera</Eyebrow>
     <Card>
       <Field label="Data" type="date" value={date} onChange={setDate} />
-      <Field label="Peso mattutino" unit="kg" step="0.1" value={form.weight} onChange={set("weight")} placeholder="76.4" />
+      <Field label="Peso mattutino" unit="kg" step="0.1" value={form.weight} onChange={set("weight")} placeholder="74.0" />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Field label="Proteine" unit="g" value={form.prot} onChange={set("prot")} placeholder="110" />
-        <Field label="Carboidrati" unit="g" value={form.carb} onChange={set("carb")} placeholder="195" />
+        <Field label="Carboidrati" unit="g" value={form.carb} onChange={set("carb")} placeholder="230" />
         <Field label="Grassi" unit="g" value={form.fat} onChange={set("fat")} placeholder="70" />
-        <Field label="Calorie" unit="kcal" value={form.kcal} onChange={set("kcal")} placeholder="1850" />
+        <Field label="Calorie" unit="kcal" value={form.kcal} onChange={set("kcal")} placeholder="2000" />
       </div>
       {macroKcal && <div style={{ fontFamily: MONO, fontSize: 11, color: form.kcal && Math.abs(macroKcal - Number(form.kcal)) > 80 ? C.signal : C.muted, marginTop: -4, marginBottom: 12 }}>
         Dai macro: {Math.round(macroKcal)} kcal{form.kcal && Math.abs(macroKcal - Number(form.kcal)) > 80 ? " — non torna, ricontrolla" : ""}
       </div>}
-      <Choice label="Allenamento oggi" options={["A", "B", "C", "Tennis/Padel", "Riposo"]} value={form.session} onChange={set("session")} />
+      <Choice label="Allenamento oggi" options={["A", "B", "C", "Extra", "Tennis/Padel", "Riposo"]} value={form.session} onChange={set("session")} />
       <TextArea label="Note" rows={2} value={form.note} onChange={set("note")} placeholder="Pasto fuori, dolore, imprevisti…" />
       <Button onClick={save}>Salva giornata</Button>
     </Card>
     <Eyebrow n="02">Lettura corrente</Eyebrow>
     <Card>
       <Readout name="Media peso 7 gg" value={thisWeek ? fmt(thisWeek.avg, 2) : "—"} unit="kg" range={`n=${thisWeek?.n ?? 0}`} />
-      <Readout name="Variazione vs sett. prec." value={weekDelta !== null ? (weekDelta > 0 ? "+" : "") + fmt(weekDelta, 2) : "—"} unit="kg" range="−0.15…−0.60"
-        flag={weekDelta === null ? null : weekDelta > -TARGET.weeklyLossMin ? "+" : weekDelta < -TARGET.weeklyLossMax ? "−" : null} />
+      <Readout name="Variazione vs sett. prec." value={weekDelta !== null ? (weekDelta > 0 ? "+" : "") + fmt(weekDelta, 2) : "—"} unit="kg" range={phaseOf(weekOf(todayISO())).range}
+        flag={weekDelta === null || !phaseOf(weekOf(todayISO())).flags ? null : weekDelta > -TARGET.weeklyLossMin ? "+" : weekDelta < -TARGET.weeklyLossMax ? "−" : null} />
       <Readout name="Media kcal 7 gg" value={fmt(avgMacro("kcal"), 0)} unit="kcal" range={`${TARGET.kcal}`} flag={flag(avgMacro("kcal"), TARGET.kcal, 150)} />
       <Readout name="Media proteine 7 gg" value={fmt(avgMacro("prot"), 0)} unit="g" range={`${TARGET.prot}`} flag={flag(avgMacro("prot"), TARGET.prot, 15)} />
       <Readout name="Media carbo 7 gg" value={fmt(avgMacro("carb"), 0)} unit="g" range={`${TARGET.carb}`} flag={flag(avgMacro("carb"), TARGET.carb, 30)} />
@@ -395,6 +426,9 @@ function Daily({ uid, daily, setDaily, ping, thisWeek, weekDelta, avgMacro }) {
 /* ========================== ALLENAMENTO ========================== */
 
 function ExerciseBlock({ name, targetSets, repsRange, note, rows, onSet, noteVal, onNote, lastText }) {
+  const [more, setMore] = useState(0);
+  const n = Math.max(targetSets + more, (rows || []).length);
+  const grid = "20px 1fr 1fr 1fr";
   return (
     <Card>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4, gap: 8 }}>
@@ -403,16 +437,18 @@ function ExerciseBlock({ name, targetSets, repsRange, note, rows, onSet, noteVal
       </div>
       {note && <div style={{ fontFamily: SANS, fontSize: 11, color: C.muted, marginBottom: 8 }}>{note}</div>}
       {lastText && <div style={{ fontFamily: MONO, fontSize: 11, color: C.ok, marginBottom: 10 }}>ultima volta: {lastText}</div>}
-      <div style={{ display: "grid", gridTemplateColumns: "20px 1fr 1fr", gap: 8, marginBottom: 6 }}>
-        <span /><span style={{ fontFamily: MONO, fontSize: 10, color: C.muted }}>KG</span><span style={{ fontFamily: MONO, fontSize: 10, color: C.muted }}>REPS</span>
+      <div style={{ display: "grid", gridTemplateColumns: grid, gap: 8, marginBottom: 6 }}>
+        <span /><span style={{ fontFamily: MONO, fontSize: 10, color: C.muted }}>KG</span><span style={{ fontFamily: MONO, fontSize: 10, color: C.muted }}>REPS</span><span style={{ fontFamily: MONO, fontSize: 10, color: C.muted }}>RIR</span>
       </div>
-      {Array.from({ length: targetSets }).map((_, idx) => (
-        <div key={idx} style={{ display: "grid", gridTemplateColumns: "20px 1fr 1fr", gap: 8, marginBottom: 8, alignItems: "center" }}>
+      {Array.from({ length: n }).map((_, idx) => (
+        <div key={idx} style={{ display: "grid", gridTemplateColumns: grid, gap: 8, marginBottom: 8, alignItems: "center" }}>
           <span style={{ fontFamily: MONO, fontSize: 11, color: C.muted }}>{idx + 1}</span>
           <input type="number" inputMode="decimal" placeholder="—" value={rows[idx]?.weight ?? ""} onChange={(e) => onSet(idx, "weight", e.target.value)} style={cellInput} />
           <input type="number" inputMode="numeric" placeholder="—" value={rows[idx]?.reps ?? ""} onChange={(e) => onSet(idx, "reps", e.target.value)} style={cellInput} />
+          <input type="number" inputMode="numeric" placeholder="—" value={rows[idx]?.rir ?? ""} onChange={(e) => onSet(idx, "rir", e.target.value)} style={cellInput} />
         </div>
       ))}
+      <button onClick={() => setMore((m) => m + 1)} style={{ fontFamily: MONO, fontSize: 11, color: C.muted, background: "none", border: `1px dashed ${C.rule}`, padding: "6px 10px", cursor: "pointer", marginBottom: 8 }}>+ serie</button>
       <TextArea label="Note" rows={2} value={noteVal} onChange={onNote} placeholder="Sensazioni, dolore, tecnica…" />
     </Card>
   );
@@ -421,7 +457,12 @@ function ExerciseBlock({ name, targetSets, repsRange, note, rows, onSet, noteVal
 function Allenamento({ uid, workouts, setWorkouts, daily, setDaily, ping }) {
   const [date, setDate] = useState(todayISO());
   const existing = workouts[date];
-  const [letter, setLetter] = useState(existing?.letter || "A");
+  const nextLetter = (d) => {
+    const days = Object.keys(workouts).filter((x) => x < d && x >= CYCLE_START).sort();
+    const prev = days.length ? workouts[days[days.length - 1]].letter : null;
+    return prev === "A" ? "B" : prev === "B" ? "C" : "A";
+  };
+  const [letter, setLetter] = useState(existing?.letter || nextLetter(date));
   const [sets, setSets] = useState(existing?.sets || {});
   const [notes, setNotes] = useState(existing?.notes || {});
   const [extra, setExtra] = useState(existing?.extra || []);
@@ -429,13 +470,14 @@ function Allenamento({ uid, workouts, setWorkouts, daily, setDaily, ping }) {
 
   useEffect(() => {
     const e = workouts[date];
-    setLetter(e?.letter || "A"); setSets(e?.sets || {}); setNotes(e?.notes || {}); setExtra(e?.extra || []);
+    setLetter(e?.letter || nextLetter(date)); setSets(e?.sets || {}); setNotes(e?.notes || {}); setExtra(e?.extra || []);
   }, [date]);
 
   const plan = WORKOUTS[letter];
+  const week = weekOf(date);
 
   const lastTime = (name) => {
-    const days = Object.keys(workouts).filter((d) => d < date).sort().reverse();
+    const days = Object.keys(workouts).filter((d) => d < date && d >= CYCLE_START).sort().reverse();
     for (const d of days) {
       const sess = workouts[d];
       const b = bestSet(sess.sets?.[name]) || bestSet(sess.extra?.find((e) => e.name === name)?.sets);
@@ -469,8 +511,15 @@ function Allenamento({ uid, workouts, setWorkouts, daily, setDaily, ping }) {
         <Field label="Data" type="date" value={date} onChange={setDate} />
         <Choice label="Quale scheda" options={["A", "B", "C"]} value={letter} onChange={(v) => setLetter(v || "A")} />
       </Card>
-      {plan.ex.map(([name, setsSpec, note]) => (
-        <ExerciseBlock key={name} name={name} targetSets={parseTargetSets(setsSpec)} repsRange={parseRepsRange(setsSpec)} note={note}
+      <Card style={{ borderLeft: `3px solid ${C.signal}` }}>
+        <div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 6, textTransform: "uppercase" }}>Settimana {week} di {CYCLE_WEEKS} · {phaseOf(week).name}</div>
+        <div style={{ fontFamily: SANS, fontSize: 12.5, color: C.muted, lineHeight: 1.55 }}>
+          {week <= 1 ? "Sett. 1: 2 serie per esercizio, carichi leggeri, serve a trovare i pesi giusti nella nuova palestra. " : "Composti 3 serie, il resto 2. "}
+          RIR 2–3 ovunque, ultima serie dei composti a RIR 1. Niente cedimento. Macchina assente: fai l'equivalente e inseriscilo sotto come sostituzione.
+        </div>
+      </Card>
+      {plan.ex.map(([name, repsRange, main, note]) => (
+        <ExerciseBlock key={name} name={name} targetSets={setsFor(main, week)} repsRange={repsRange} note={note}
           rows={sets[name] || []} onSet={(idx, field, val) => setPlanSet(name, idx, field, val)}
           noteVal={notes[name]} onNote={(v) => setNotes((n) => ({ ...n, [name]: v }))} lastText={lastTime(name)} />
       ))}
@@ -478,10 +527,11 @@ function Allenamento({ uid, workouts, setWorkouts, daily, setDaily, ping }) {
         <Card key={exi}>
           <div style={{ fontFamily: SANS, fontSize: 14, fontWeight: 700, marginBottom: 10 }}>{ex.name} <span style={{ fontFamily: MONO, fontSize: 10, color: C.signal }}>· sostituzione</span></div>
           {(ex.sets || []).map((_, idx) => (
-            <div key={idx} style={{ display: "grid", gridTemplateColumns: "20px 1fr 1fr", gap: 8, marginBottom: 8, alignItems: "center" }}>
+            <div key={idx} style={{ display: "grid", gridTemplateColumns: "20px 1fr 1fr 1fr", gap: 8, marginBottom: 8, alignItems: "center" }}>
               <span style={{ fontFamily: MONO, fontSize: 11, color: C.muted }}>{idx + 1}</span>
               <input type="number" inputMode="decimal" placeholder="kg" value={ex.sets[idx]?.weight ?? ""} onChange={(e) => setExtraSet(exi, idx, "weight", e.target.value)} style={cellInput} />
               <input type="number" inputMode="numeric" placeholder="reps" value={ex.sets[idx]?.reps ?? ""} onChange={(e) => setExtraSet(exi, idx, "reps", e.target.value)} style={cellInput} />
+              <input type="number" inputMode="numeric" placeholder="RIR" value={ex.sets[idx]?.rir ?? ""} onChange={(e) => setExtraSet(exi, idx, "rir", e.target.value)} style={cellInput} />
             </div>
           ))}
           <Button variant="outline" onClick={() => addExtraSet(exi)}>+ serie</Button>
@@ -630,8 +680,11 @@ function Charts({ daily, sortedDays, monthlies }) {
 function Weekly({ uid, weeklies, setWeeklies, ping, thisWeek, weekDelta, avgMacro }) {
   const [f, setF] = useState({});
   const set = (k) => (v) => setF((s) => ({ ...s, [k]: v }));
-  const tooFast = weekDelta !== null && weekDelta < -TARGET.weeklyLossMax;
-  const stalled = weekDelta !== null && weekDelta > -TARGET.weeklyLossMin;
+  const phase = phaseOf(weekOf(todayISO()));
+  const tooFast = phase.flags && weekDelta !== null && weekDelta < -TARGET.weeklyLossMax;
+  const stalled = phase.flags && weekDelta !== null && weekDelta > -TARGET.weeklyLossMin;
+  const calibUp = !phase.flags && weekDelta !== null && weekDelta > 0.3;
+  const calibDown = !phase.flags && weekDelta !== null && weekDelta < -0.3;
   const painFlag = f.pain && f.pain !== "Nessuno";
   const perfDown = f.perf === "Peggiorata";
   const sleepDown = f.sleep && Number(f.sleep) <= 4;
@@ -650,19 +703,22 @@ function Weekly({ uid, weeklies, setWeeklies, ping, thisWeek, weekDelta, avgMacr
     <Eyebrow n="03">Check-in settimanale</Eyebrow>
     <Card style={{ borderLeft: `3px solid ${C.ink}` }}>
       <Readout name="Media peso" value={thisWeek ? fmt(thisWeek.avg, 2) : "—"} unit="kg" range={`n=${thisWeek?.n ?? 0}`} />
-      <Readout name="Variazione" value={weekDelta !== null ? (weekDelta > 0 ? "+" : "") + fmt(weekDelta, 2) : "—"} unit="kg" range="−0.15…−0.60" flag={weekDelta === null ? null : tooFast ? "−" : stalled ? "+" : null} />
+      <Readout name="Variazione" value={weekDelta !== null ? (weekDelta > 0 ? "+" : "") + fmt(weekDelta, 2) : "—"} unit="kg" range={phase.range} flag={weekDelta === null ? null : (tooFast || calibDown) ? "−" : (stalled || calibUp) ? "+" : null} />
     </Card>
     <Card>
       <Choice label="Aderenza alla dieta" options={["Sopra il 90%", "70-90%", "Sotto il 70%"]} value={f.adherence} onChange={set("adherence")} />
-      <Choice label="Allenamenti completati" options={["3 su 3", "2 su 3", "1 su 3", "0"]} value={f.sessions} onChange={set("sessions")} />
+      <Choice label="Allenamenti completati" options={["3 su 3", "3 + extra", "2 su 3", "1 su 3", "0"]} value={f.sessions} onChange={set("sessions")} />
       <Choice label="Performance in palestra" options={["Migliorata", "Stabile", "Peggiorata"]} value={f.perf} onChange={set("perf")} />
       <Scale label="Fame media" value={f.hunger} onChange={set("hunger")} lo="assente" hi="ingestibile" />
       <Scale label="Energia" value={f.energy} onChange={set("energy")} lo="a terra" hi="ottima" />
       <Scale label="Qualità del sonno" value={f.sleep} onChange={set("sleep")} lo="pessima" hi="ottima" />
       <Scale label="Stress percepito" value={f.stress} onChange={set("stress")} lo="nullo" hi="massimo" />
       <Choice label="Dolore" options={["Nessuno", "Spalla", "Sterno", "Schiena", "Altro"]} value={f.pain} onChange={set("pain")} />
+      <Choice label="Passi medi al giorno" options={["Sotto 8k", "8-10k", "Sopra 10k"]} value={f.steps} onChange={set("steps")} />
+      <Choice label="RIR rispettato (niente cedimento)" options={["Sì", "Quasi sempre", "No"]} value={f.rirOk} onChange={set("rirOk")} />
       <Choice label="Tennis / padel" options={["No", "1 volta", "2+ volte"]} value={f.sport} onChange={set("sport")} />
     </Card>
+    {(calibUp || calibDown) && <Card style={{ borderLeft: `3px solid ${C.signal}` }}><div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 10 }}>CALIBRAZIONE</div><Choice label="Hai pesato tutto in modo preciso?" options={["Sì", "In parte", "No"]} value={f.q_calibPrecision} onChange={set("q_calibPrecision")} /></Card>}
     {tooFast && <Card style={{ borderLeft: `3px solid ${C.signal}` }}><div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 10 }}>CALO RAPIDO</div><Choice label="Hai mangiato meno del previsto?" options={["Sì", "No", "Non so"]} value={f.q_ate_less} onChange={set("q_ate_less")} /></Card>}
     {stalled && <Card style={{ borderLeft: `3px solid ${C.signal}` }}><div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 10 }}>PESO FERMO</div><Choice label="Pesatura precisa?" options={["Tutto pesato", "Stimato in parte", "Molto stimato"]} value={f.q_precision} onChange={set("q_precision")} /></Card>}
     {perfDown && <Card style={{ borderLeft: `3px solid ${C.signal}` }}><div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 10 }}>PERFORMANCE</div><TextArea label="Su quali esercizi?" rows={2} value={f.q_whichLifts} onChange={set("q_whichLifts")} /></Card>}
@@ -729,20 +785,26 @@ function Monthly({ uid, monthlies, setMonthlies, ping }) {
     ping("Misure salvate"); setF({});
   };
 
-  const last = monthlies[monthlies.length - 1];
-  const cmp = (k) => { const prev = last?.[k] ?? BASE_MEASURE[k]; const now = Number(f[k]); if (!now || !prev) return null; const d = now - prev; return `${d > 0 ? "+" : ""}${d.toFixed(1)}`; };
+  const measureOpen = weekOf(todayISO()) >= MEASURE_FROM_WEEK;
+  const cycleMonthlies = monthlies.filter((m) => m.date >= CYCLE_START && (m.waist || m.chest));
+  const last = cycleMonthlies[cycleMonthlies.length - 1];
+  const cmp = (k) => { const prev = last?.[k]; const now = Number(f[k]); if (!now || !prev) return null; const d = now - prev; return `${d > 0 ? "+" : ""}${d.toFixed(1)}`; };
   const galleryDates = Object.keys(gallery).sort().reverse();
 
   return (
     <>
       <Eyebrow n="04">Composizione corporea · ogni 4 settimane</Eyebrow>
-      <Card>
+      {!measureOpen && <Card style={{ borderLeft: `3px solid ${C.signal}` }}>
+        <div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 8 }}>CIRCONFERENZE RIMANDATE</div>
+        <div style={{ fontFamily: SANS, fontSize: 13, color: C.muted, lineHeight: 1.55 }}>Si misura dalla settimana {MEASURE_FROM_WEEK} (dal 24 novembre). Quella sarà la nuova misura di partenza, senza confronti con agosto. Le foto invece puoi caricarle già ora.</div>
+      </Card>}
+      {measureOpen && <Card>
         <div style={{ fontFamily: SANS, fontSize: 13, color: C.muted, marginBottom: 16 }}>Sempre la mattina a digiuno, muscolo rilassato, stesso punto di misura.</div>
         {[["chest","Torace","all'altezza dei capezzoli"],["waist","Vita","all'ombelico"],["hips","Fianchi","punto più largo"],["armL","Braccio sinistro","a metà"],["armR","Braccio destro","a metà"],["thighL","Coscia sinistra","a metà"],["thighR","Coscia destra","a metà"]].map(([k, label, hint]) => (
-          <div key={k}><Field label={`${label} — ${hint}`} unit="cm" step="0.1" value={f[k]} onChange={set(k)} placeholder={String(BASE_MEASURE[k])} />
+          <div key={k}><Field label={`${label} — ${hint}`} unit="cm" step="0.1" value={f[k]} onChange={set(k)} placeholder="cm" />
           {cmp(k) && <div style={{ fontFamily: MONO, fontSize: 11, color: C.muted, marginTop: -10, marginBottom: 12 }}>{cmp(k)} cm dall'ultima misura</div>}</div>
         ))}
-      </Card>
+      </Card>}
       <Card style={{ borderLeft: `3px solid ${C.ink}` }}>
         <div style={{ fontFamily: MONO, fontSize: 11, color: C.muted, marginBottom: 10 }}>FOTO E VIDEO — private, salvate su Supabase</div>
         <input type="file" accept="image/*" multiple onChange={onFiles} style={{ fontFamily: SANS, fontSize: 13, marginBottom: 10, color: C.ink }} />
@@ -761,13 +823,13 @@ function Monthly({ uid, monthlies, setMonthlies, ping }) {
           </div>
         ))}
       </Card>
-      <Card>
+      {measureOpen && <Card>
         <Choice label="Allo specchio" options={["Meglio", "Uguale", "Peggio", "Non so dire"]} value={f.mirror} onChange={set("mirror")} />
         <Choice label="Vestiti" options={["Più larghi", "Uguali", "Più stretti"]} value={f.clothes} onChange={set("clothes")} />
         <Scale label="Soddisfazione del mese" value={f.satisfaction} onChange={set("satisfaction")} lo="nulla" hi="massima" />
         <TextArea label="Cambiamenti rilevanti" rows={4} value={f.changes} onChange={set("changes")} />
         <Button onClick={save}>Salva misure del mese</Button>
-      </Card>
+      </Card>}
     </>
   );
 }
@@ -785,7 +847,7 @@ function Cycle({ uid, cycles, setCycles, ping }) {
     ping("Review salvata"); setF({});
   };
   return <>
-    <Eyebrow n="05">Review di fine ciclo · ogni 8 settimane</Eyebrow>
+    <Eyebrow n="05">Review · checkpoint settimana 6 e 12</Eyebrow>
     <Card>
       <Field label="Peso iniziale" unit="kg" step="0.1" value={f.startWeight} onChange={set("startWeight")} />
       <Field label="Peso finale" unit="kg" step="0.1" value={f.endWeight} onChange={set("endWeight")} />
@@ -806,11 +868,17 @@ function Cycle({ uid, cycles, setCycles, ping }) {
 
 function Piano() {
   const [open, setOpen] = useState("A");
+  const week = weekOf(todayISO());
   return <>
-    <Eyebrow n="06">Piano · Ciclo 1</Eyebrow>
+    <Eyebrow n="06">Piano · {CYCLE_LABEL}</Eyebrow>
+    <Card style={{ borderLeft: `3px solid ${C.signal}` }}>
+      <div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 6, textTransform: "uppercase" }}>Settimana {week} di {CYCLE_WEEKS} · {phaseOf(week).name}</div>
+      <div style={{ fontFamily: SANS, fontSize: 12.5, color: C.muted, lineHeight: 1.6 }}>
+        Start {CYCLE_START}. Sett. 1: 2 serie per esercizio. Sett. 2: composti 3 serie. RIR 2–3 ovunque, ultima serie dei composti a RIR 1, mai cedimento. 8–10k passi al giorno. Deficit deciso dopo 2 settimane di tracking preciso. Circonferenze dalla sett. {MEASURE_FROM_WEEK}. Checkpoint sett. 6 e 12.
+      </div>
+    </Card>
     <Card>
-      <Readout name="Calorie" value={TARGET.kcal} unit="kcal" range="giorni normali" />
-      <Readout name="Calorie refeed" value={TARGET.kcalRefeed} unit="kcal" range="1 sett./4" />
+      <Readout name="Calorie" value={TARGET.kcal} unit="kcal" range="ogni giorno" />
       <Readout name="Proteine" value={TARGET.prot} unit="g" range="" />
       <Readout name="Carboidrati" value={TARGET.carb} unit="g" range="" />
       <Readout name="Grassi" value={TARGET.fat} unit="g" range="" />
@@ -820,11 +888,11 @@ function Piano() {
     </div>
     <Card>
       <div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 14, textTransform: "uppercase" }}>{WORKOUTS[open].name}</div>
-      {WORKOUTS[open].ex.map(([name, sets, note], i) => (
+      {WORKOUTS[open].ex.map(([name, reps, main, note], i) => (
         <div key={i} style={{ padding: "11px 0", borderBottom: `1px solid ${C.wash}` }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
             <span style={{ fontFamily: SANS, fontSize: 14, fontWeight: 600 }}>{name}</span>
-            <span style={{ fontFamily: MONO, fontSize: 13, whiteSpace: "nowrap" }}>{sets}</span>
+            <span style={{ fontFamily: MONO, fontSize: 13, whiteSpace: "nowrap" }}>{setsFor(main, week)} × {reps}</span>
           </div>
           {note && <div style={{ fontFamily: SANS, fontSize: 12, color: C.muted, marginTop: 3 }}>{note}</div>}
         </div>
@@ -862,7 +930,7 @@ function Exporter({ daily, weeklies, monthlies, workouts, thisWeek, lastWeek, we
 
   const build = (which) => {
     const L = [];
-    L.push(`COACHING REPORT — ${which.toUpperCase()}`, `Data: ${todayISO()}`, "");
+    L.push(`COACHING REPORT — ${which.toUpperCase()}`, `Data: ${todayISO()}`, `${CYCLE_LABEL} · settimana ${weekOf(todayISO())}/${CYCLE_WEEKS} · ${phaseOf(weekOf(todayISO())).name}`, "");
     L.push("— PESO —");
     L.push(`Media 7 gg: ${thisWeek ? fmt(thisWeek.avg, 2) + " kg" : "insufficiente"}`);
     L.push(`Variazione: ${weekDelta !== null ? (weekDelta > 0 ? "+" : "") + fmt(weekDelta, 2) + " kg" : "—"}`, "");
@@ -875,9 +943,11 @@ function Exporter({ daily, weeklies, monthlies, workouts, thisWeek, lastWeek, we
       L.push("— ALLENAMENTI —");
       wDates.forEach((d) => {
         const sess = workouts[d];
-        L.push(`${d} · Scheda ${sess.letter}`);
+        L.push(`${d} · Scheda ${sess.letter} · sett. ${weekOf(d)}`);
+        Object.entries(sess.notes || {}).forEach(([name, n]) => { if (n) L.push(`  nota ${name}: ${n}`); });
+        (sess.extra || []).forEach((ex) => { const d2 = (ex.sets || []).filter((s) => s.weight || s.reps).map((s) => `${s.weight || "?"}kg×${s.reps || "?"}${s.rir ? "@" + s.rir : ""}`).join(", "); if (d2) L.push(`  SOSTITUZIONE ${ex.name}: ${d2}`); });
         Object.entries(sess.sets || {}).forEach(([name, sets]) => {
-          const done = (sets || []).filter((s) => s.weight || s.reps).map((s) => `${s.weight || "?"}kg×${s.reps || "?"}`).join(", ");
+          const done = (sets || []).filter((s) => s.weight || s.reps).map((s) => `${s.weight || "?"}kg×${s.reps || "?"}${s.rir !== undefined && s.rir !== "" ? "@" + s.rir : ""}`).join(", ");
           if (done) L.push(`  ${name}: ${done}`);
         });
       });
@@ -979,9 +1049,9 @@ function App({ session }) {
     storico: `${sortedDays.length} giorni`,
     grafici: thisWeek ? `media ${fmt(thisWeek.avg, 1)} kg` : "poco storico",
     settimana: weeklies.length ? `ultimo ${weeklies[weeklies.length - 1].date}` : "nessuno ancora",
-    mese: monthlies.length ? `ultimo ${monthlies[monthlies.length - 1].date}` : "nessuno ancora",
+    mese: weekOf(todayISO()) < MEASURE_FROM_WEEK ? "misure da sett. 4" : (monthlies.length ? `ultimo ${monthlies[monthlies.length - 1].date}` : "nessuno ancora"),
     ciclo: `${cycles.length} chiusi`,
-    piano: "Ciclo 1 attivo",
+    piano: `${CYCLE_LABEL} · sett. ${weekOf(todayISO())}/${CYCLE_WEEKS}`,
     coach: `${coachNotes.length} valutazioni`,
     export: "genera report",
     guida: "come funziona",
