@@ -93,9 +93,19 @@ const CYCLE_LABEL = "Ciclo 2";
 const CYCLE_WEEKS = 12;
 const MEASURE_FROM_WEEK = 4;
 const weekOf = (iso) => Math.max(1, Math.floor((new Date(iso) - new Date(CYCLE_START)) / 86400000 / 7) + 1);
-const phaseOf = (week) => week <= 2
-  ? { name: "Calibrazione · mantenimento", range: "±0.30", flags: false }
-  : { name: "Fase attiva", range: "−0.15…−0.60", flags: true };
+// Dieta: resta mantenimento finché il coach non attiva il deficit (non dipende dal calendario)
+const DEFICIT_ACTIVE = false;
+const phaseOf = () => DEFICIT_ACTIVE
+  ? { name: "Deficit", range: "−0.15…−0.60", flags: true }
+  : { name: "Mantenimento · calibrazione", range: "±0.30", flags: false };
+// Allenamento: la settimana avanza ogni 3 sessioni fatte (A-B-C), non col calendario
+const SESSIONS_PER_WEEK = 3;
+const cycleSessionsBefore = (workouts, d) => Object.keys(workouts || {}).filter((x) => x >= CYCLE_START && x < d && ["A", "B", "C"].includes(workouts[x]?.letter)).length;
+const trainWeekOf = (workouts, d) => Math.floor(cycleSessionsBefore(workouts, d) / SESSIONS_PER_WEEK) + 1;
+const sessionInWeek = (workouts, d) => (cycleSessionsBefore(workouts, d) % SESSIONS_PER_WEEK) + 1;
+const NEXT_DAY = "9999-12-31";
+const hasData = (arr) => (arr || []).some((x) => x && (x.weight || x.reps));
+const effectiveName = (orig, letter, planSwaps) => (planSwaps?.[letter] || {})[orig] || orig;
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmt = (n, d = 1) => (n === null || n === undefined || Number.isNaN(n)) ? "—" : Number(n).toFixed(d);
@@ -425,8 +435,12 @@ function Daily({ uid, daily, setDaily, ping, thisWeek, weekDelta, avgMacro }) {
 
 /* ========================== ALLENAMENTO ========================== */
 
-function ExerciseBlock({ name, targetSets, repsRange, note, rows, onSet, noteVal, onNote, lastText }) {
+function ExerciseBlock({ name, targetSets, repsRange, note, rows, onSet, noteVal, onNote, lastText, swappedFrom, swapKind, onSwap, onRestore }) {
   const [more, setMore] = useState(0);
+  const [swapOpen, setSwapOpen] = useState(false);
+  const [swapName, setSwapName] = useState("");
+  const doSwap = (permanent) => { if (!swapName.trim()) return; onSwap(swapName.trim(), permanent); setSwapName(""); setSwapOpen(false); };
+  const smallBtn = { fontFamily: MONO, fontSize: 11, color: C.muted, background: "none", border: `1px dashed ${C.rule}`, padding: "6px 10px", cursor: "pointer", marginBottom: 8 };
   const n = Math.max(targetSets + more, (rows || []).length);
   const grid = "20px 1fr 1fr 1fr";
   return (
@@ -435,6 +449,7 @@ function ExerciseBlock({ name, targetSets, repsRange, note, rows, onSet, noteVal
         <span style={{ fontFamily: SANS, fontSize: 14, fontWeight: 700 }}>{name}</span>
         {repsRange && <span style={{ fontFamily: MONO, fontSize: 11, color: C.muted, whiteSpace: "nowrap" }}>target {repsRange}</span>}
       </div>
+      {swappedFrom && <div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 6 }}>al posto di {swappedFrom} · {swapKind === "oggi" ? "solo oggi" : "fisso nella scheda"}</div>}
       {note && <div style={{ fontFamily: SANS, fontSize: 11, color: C.muted, marginBottom: 8 }}>{note}</div>}
       {lastText && <div style={{ fontFamily: MONO, fontSize: 11, color: C.ok, marginBottom: 10 }}>ultima volta: {lastText}</div>}
       <div style={{ display: "grid", gridTemplateColumns: grid, gap: 8, marginBottom: 6 }}>
@@ -448,13 +463,25 @@ function ExerciseBlock({ name, targetSets, repsRange, note, rows, onSet, noteVal
           <input type="number" inputMode="numeric" placeholder="—" value={rows[idx]?.rir ?? ""} onChange={(e) => onSet(idx, "rir", e.target.value)} style={cellInput} />
         </div>
       ))}
-      <button onClick={() => setMore((m) => m + 1)} style={{ fontFamily: MONO, fontSize: 11, color: C.muted, background: "none", border: `1px dashed ${C.rule}`, padding: "6px 10px", cursor: "pointer", marginBottom: 8 }}>+ serie</button>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button onClick={() => setMore((m) => m + 1)} style={smallBtn}>+ serie</button>
+        {onSwap && <button onClick={() => setSwapOpen((o) => !o)} style={smallBtn}>{swapOpen ? "annulla" : "sostituisci"}</button>}
+        {swappedFrom && onRestore && <button onClick={onRestore} style={smallBtn}>ripristina {swappedFrom}</button>}
+      </div>
+      {swapOpen && <div style={{ border: `1px solid ${C.rule}`, padding: 12, marginBottom: 10 }}>
+        <Field label="Sostituisci con" type="text" value={swapName} onChange={setSwapName} placeholder="Nome del nuovo esercizio" />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <Button variant="outline" onClick={() => doSwap(false)}>Solo oggi</Button>
+          <Button onClick={() => doSwap(true)}>Da ora in poi</Button>
+        </div>
+        <div style={{ fontFamily: SANS, fontSize: 11, color: C.muted, marginTop: 8 }}>"Da ora in poi" cambia la scheda per tutte le prossime sessioni. Le serie già scritte qui passano al nuovo esercizio.</div>
+      </div>}
       <TextArea label="Note" rows={2} value={noteVal} onChange={onNote} placeholder="Sensazioni, dolore, tecnica…" />
     </Card>
   );
 }
 
-function Allenamento({ uid, workouts, setWorkouts, daily, setDaily, ping }) {
+function Allenamento({ uid, workouts, setWorkouts, daily, setDaily, ping, planSwaps, updatePlanSwaps }) {
   const [date, setDate] = useState(todayISO());
   const existing = workouts[date];
   const nextLetter = (d) => {
@@ -474,7 +501,42 @@ function Allenamento({ uid, workouts, setWorkouts, daily, setDaily, ping }) {
   }, [date]);
 
   const plan = WORKOUTS[letter];
-  const week = weekOf(date);
+  const week = trainWeekOf(workouts, date);
+  const sessN = sessionInWeek(workouts, date);
+  const sessSwaps = notes.__swaps || {};
+  const permSwaps = (planSwaps || {})[letter] || {};
+  const resolve = (orig) => {
+    if (sessSwaps[orig]) return { name: sessSwaps[orig], from: orig, kind: "oggi" };
+    const p = permSwaps[orig];
+    if (p && !(hasData(sets[orig]) && !hasData(sets[p]))) return { name: p, from: orig, kind: "sempre" };
+    return { name: orig, from: null, kind: null };
+  };
+  const moveData = (from, to) => {
+    if (from === to) return;
+    setSets((s) => { if (!s[from]) return s; const n = { ...s, [to]: s[from] }; delete n[from]; return n; });
+    setNotes((m) => { if (!m[from]) return m; const n = { ...m, [to]: m[from] }; delete n[from]; return n; });
+  };
+  const setSessSwap = (orig, val) => setNotes((m) => { const sw = { ...(m.__swaps || {}) }; if (val) sw[orig] = val; else delete sw[orig]; return { ...m, __swaps: sw }; });
+  const swapExercise = async (orig, cur, newName, permanent) => {
+    moveData(cur, newName);
+    if (permanent) {
+      setSessSwap(orig, null);
+      const next = { ...(planSwaps || {}), [letter]: { ...permSwaps, [orig]: newName } };
+      if (newName === orig) delete next[letter][orig];
+      const ok = await updatePlanSwaps(next);
+      ping(ok ? `Scheda ${letter} aggiornata: ${newName}` : "Errore nel salvare la scheda");
+    } else {
+      setSessSwap(orig, newName === orig ? null : newName);
+    }
+  };
+  const restoreExercise = async (orig, cur, kind) => {
+    moveData(cur, orig);
+    if (kind === "oggi") { setSessSwap(orig, null); return; }
+    const next = { ...(planSwaps || {}), [letter]: { ...permSwaps } };
+    delete next[letter][orig];
+    const ok = await updatePlanSwaps(next);
+    ping(ok ? `${orig} rimesso nella scheda ${letter}` : "Errore nel salvare la scheda");
+  };
 
   const lastTime = (name) => {
     const days = Object.keys(workouts).filter((d) => d < date && d >= CYCLE_START).sort().reverse();
@@ -512,20 +574,24 @@ function Allenamento({ uid, workouts, setWorkouts, daily, setDaily, ping }) {
         <Choice label="Quale scheda" options={["A", "B", "C"]} value={letter} onChange={(v) => setLetter(v || "A")} />
       </Card>
       <Card style={{ borderLeft: `3px solid ${C.signal}` }}>
-        <div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 6, textTransform: "uppercase" }}>Settimana {week} di {CYCLE_WEEKS} · {phaseOf(week).name}</div>
+        <div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 6, textTransform: "uppercase" }}>Settimana {week} di {CYCLE_WEEKS} · sessione {sessN} di {SESSIONS_PER_WEEK}</div>
         <div style={{ fontFamily: SANS, fontSize: 12.5, color: C.muted, lineHeight: 1.55 }}>
-          {week <= 1 ? "Sett. 1: 2 serie per esercizio, carichi leggeri, serve a trovare i pesi giusti nella nuova palestra. " : "Composti 3 serie, il resto 2. "}
-          RIR 2–3 ovunque, ultima serie dei composti a RIR 1. Niente cedimento. Macchina assente: fai l'equivalente e inseriscilo sotto come sostituzione.
+          La settimana avanza ogni 3 allenamenti fatti, non col calendario. {week <= 1 ? "Sett. 1: 2 serie per esercizio, carichi leggeri, serve a trovare i pesi giusti nella nuova palestra. " : "Composti 3 serie, il resto 2. "}
+          RIR 2–3 ovunque, ultima serie dei composti a RIR 1. Niente cedimento. Per cambiare un esercizio usa "sostituisci" sotto l'esercizio.
         </div>
       </Card>
-      {plan.ex.map(([name, repsRange, main, note]) => (
-        <ExerciseBlock key={name} name={name} targetSets={setsFor(main, week)} repsRange={repsRange} note={note}
+      {plan.ex.map(([orig, repsRange, main, note]) => {
+        const r = resolve(orig); const name = r.name;
+        return <ExerciseBlock key={letter + orig + name} name={name} targetSets={setsFor(main, week)} repsRange={repsRange} note={r.from ? "" : note}
           rows={sets[name] || []} onSet={(idx, field, val) => setPlanSet(name, idx, field, val)}
-          noteVal={notes[name]} onNote={(v) => setNotes((n) => ({ ...n, [name]: v }))} lastText={lastTime(name)} />
-      ))}
+          noteVal={notes[name]} onNote={(v) => setNotes((n) => ({ ...n, [name]: v }))} lastText={lastTime(name)}
+          swappedFrom={r.from} swapKind={r.kind}
+          onSwap={(newName, permanent) => swapExercise(orig, name, newName, permanent)}
+          onRestore={() => restoreExercise(orig, name, r.kind)} />;
+      })}
       {extra.map((ex, exi) => (
         <Card key={exi}>
-          <div style={{ fontFamily: SANS, fontSize: 14, fontWeight: 700, marginBottom: 10 }}>{ex.name} <span style={{ fontFamily: MONO, fontSize: 10, color: C.signal }}>· sostituzione</span></div>
+          <div style={{ fontFamily: SANS, fontSize: 14, fontWeight: 700, marginBottom: 10 }}>{ex.name} <span style={{ fontFamily: MONO, fontSize: 10, color: C.signal }}>· extra</span></div>
           {(ex.sets || []).map((_, idx) => (
             <div key={idx} style={{ display: "grid", gridTemplateColumns: "20px 1fr 1fr 1fr", gap: 8, marginBottom: 8, alignItems: "center" }}>
               <span style={{ fontFamily: MONO, fontSize: 11, color: C.muted }}>{idx + 1}</span>
@@ -538,8 +604,9 @@ function Allenamento({ uid, workouts, setWorkouts, daily, setDaily, ping }) {
         </Card>
       ))}
       <Card>
-        <Field label="Hai sostituito un esercizio?" type="text" value={newExName} onChange={setNewExName} placeholder="Nome dell'esercizio fatto" />
-        <Button variant="outline" onClick={addExtraExercise}>Aggiungi esercizio</Button>
+        <Field label="Esercizio in più, fuori scheda" type="text" value={newExName} onChange={setNewExName} placeholder="Nome dell'esercizio" />
+        <div style={{ fontFamily: SANS, fontSize: 11, color: C.muted, marginTop: -6, marginBottom: 10 }}>Solo per esercizi aggiunti. Per cambiarne uno della scheda usa "sostituisci" sotto quell'esercizio.</div>
+        <Button variant="outline" onClick={addExtraExercise}>Aggiungi esercizio extra</Button>
       </Card>
       <Card><Button onClick={save}>Salva allenamento</Button></Card>
     </>
@@ -866,15 +933,17 @@ function Cycle({ uid, cycles, setCycles, ping }) {
 
 /* ============================ PIANO ============================ */
 
-function Piano() {
+function Piano({ workouts, planSwaps }) {
   const [open, setOpen] = useState("A");
-  const week = weekOf(todayISO());
+  const week = trainWeekOf(workouts, NEXT_DAY);
+  const sessN = sessionInWeek(workouts, NEXT_DAY);
   return <>
     <Eyebrow n="06">Piano · {CYCLE_LABEL}</Eyebrow>
     <Card style={{ borderLeft: `3px solid ${C.signal}` }}>
-      <div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 6, textTransform: "uppercase" }}>Settimana {week} di {CYCLE_WEEKS} · {phaseOf(week).name}</div>
+      <div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 6, textTransform: "uppercase" }}>Allenamento · settimana {week} di {CYCLE_WEEKS} · prossima sessione {sessN}/{SESSIONS_PER_WEEK}</div>
+      <div style={{ fontFamily: MONO, fontSize: 11, color: C.muted, marginBottom: 8 }}>CALENDARIO SETT. {weekOf(todayISO())} · DIETA: {phaseOf().name.toUpperCase()}</div>
       <div style={{ fontFamily: SANS, fontSize: 12.5, color: C.muted, lineHeight: 1.6 }}>
-        Start {CYCLE_START}. Sett. 1: 2 serie per esercizio. Sett. 2: composti 3 serie. RIR 2–3 ovunque, ultima serie dei composti a RIR 1, mai cedimento. 8–10k passi al giorno. Deficit deciso dopo 2 settimane di tracking preciso. Circonferenze dalla sett. {MEASURE_FROM_WEEK}. Checkpoint sett. 6 e 12.
+        Start {CYCLE_START}. La settimana di allenamento avanza ogni 3 sessioni fatte. Sett. 1: 2 serie per esercizio. Sett. 2: composti 3 serie. RIR 2–3 ovunque, ultima serie dei composti a RIR 1, mai cedimento. 8–10k passi al giorno. Deficit deciso dal coach dopo la calibrazione. Circonferenze dalla sett. {MEASURE_FROM_WEEK} di calendario. Checkpoint sett. 6 e 12.
       </div>
     </Card>
     <Card>
@@ -888,22 +957,25 @@ function Piano() {
     </div>
     <Card>
       <div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 14, textTransform: "uppercase" }}>{WORKOUTS[open].name}</div>
-      {WORKOUTS[open].ex.map(([name, reps, main, note], i) => (
-        <div key={i} style={{ padding: "11px 0", borderBottom: `1px solid ${C.wash}` }}>
+      {WORKOUTS[open].ex.map(([orig, reps, main, note], i) => {
+        const name = effectiveName(orig, open, planSwaps);
+        return <div key={i} style={{ padding: "11px 0", borderBottom: `1px solid ${C.wash}` }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
             <span style={{ fontFamily: SANS, fontSize: 14, fontWeight: 600 }}>{name}</span>
             <span style={{ fontFamily: MONO, fontSize: 13, whiteSpace: "nowrap" }}>{setsFor(main, week)} × {reps}</span>
           </div>
-          {note && <div style={{ fontFamily: SANS, fontSize: 12, color: C.muted, marginTop: 3 }}>{note}</div>}
-        </div>
-      ))}
+          {name !== orig ? <div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginTop: 3 }}>al posto di {orig}</div>
+            : note && <div style={{ fontFamily: SANS, fontSize: 12, color: C.muted, marginTop: 3 }}>{note}</div>}
+        </div>;
+      })}
     </Card>
   </>;
 }
 
 /* ============================ COACH ============================ */
 
-function Coach({ coachNotes }) {
+function Coach({ coachNotes: allNotes }) {
+  const coachNotes = allNotes.filter((n) => n.kind !== "plan_swaps");
   return <>
     <Eyebrow n="07">Le mie valutazioni</Eyebrow>
     {coachNotes.length === 0 ? <Card><div style={{ fontFamily: SANS, fontSize: 13, color: C.muted }}>Ancora nessuna.</div></Card> :
@@ -918,7 +990,7 @@ function Coach({ coachNotes }) {
 
 /* =========================== EXPORT =========================== */
 
-function Exporter({ daily, weeklies, monthlies, workouts, thisWeek, lastWeek, weekDelta, avgMacro, ping }) {
+function Exporter({ daily, weeklies, monthlies, workouts, thisWeek, lastWeek, weekDelta, avgMacro, ping, planSwaps }) {
   const [text, setText] = useState("");
   const [kind, setKind] = useState("");
 
@@ -930,7 +1002,10 @@ function Exporter({ daily, weeklies, monthlies, workouts, thisWeek, lastWeek, we
 
   const build = (which) => {
     const L = [];
-    L.push(`COACHING REPORT — ${which.toUpperCase()}`, `Data: ${todayISO()}`, `${CYCLE_LABEL} · settimana ${weekOf(todayISO())}/${CYCLE_WEEKS} · ${phaseOf(weekOf(todayISO())).name}`, "");
+    L.push(`COACHING REPORT — ${which.toUpperCase()}`, `Data: ${todayISO()}`, `${CYCLE_LABEL} · allenamento sett. ${trainWeekOf(workouts, NEXT_DAY)}/${CYCLE_WEEKS} (${cycleSessionsBefore(workouts, NEXT_DAY)} sessioni fatte) · calendario sett. ${weekOf(todayISO())} · dieta: ${phaseOf().name}`);
+    const permLines = Object.entries(planSwaps || {}).flatMap(([lt, m]) => Object.entries(m || {}).map(([o, n]) => `  ${lt}: ${o} → ${n}`));
+    if (permLines.length) L.push("Sostituzioni fisse in scheda:", ...permLines);
+    L.push("");
     L.push("— PESO —");
     L.push(`Media 7 gg: ${thisWeek ? fmt(thisWeek.avg, 2) + " kg" : "insufficiente"}`);
     L.push(`Variazione: ${weekDelta !== null ? (weekDelta > 0 ? "+" : "") + fmt(weekDelta, 2) + " kg" : "—"}`, "");
@@ -938,14 +1013,21 @@ function Exporter({ daily, weeklies, monthlies, workouts, thisWeek, lastWeek, we
     L.push(`Calorie: ${fmt(avgMacro("kcal"), 0)} (target ${TARGET.kcal})`);
     L.push(`Proteine: ${fmt(avgMacro("prot"), 0)} g (target ${TARGET.prot})`, "");
 
+    const dDates = Object.keys(daily || {}).filter((d) => { const c = new Date(); c.setDate(c.getDate() - (which === "Settimanale" ? 7 : which === "Mensile" ? 30 : 84)); return new Date(d) >= c; }).sort();
+    if (dDates.length) {
+      L.push("— GIORNI (data · peso · kcal · P/C/G · sessione) —");
+      dDates.forEach((d) => { const x = daily[d] || {}; L.push(`${d} · ${x.weight ?? "-"} · ${x.kcal ?? "-"} · ${x.prot ?? "-"}/${x.carb ?? "-"}/${x.fat ?? "-"} · ${x.session || "-"}${x.note ? " · " + x.note : ""}`); });
+      L.push("");
+    }
     const wDates = workoutWindow(which);
     if (wDates.length) {
       L.push("— ALLENAMENTI —");
       wDates.forEach((d) => {
         const sess = workouts[d];
-        L.push(`${d} · Scheda ${sess.letter} · sett. ${weekOf(d)}`);
-        Object.entries(sess.notes || {}).forEach(([name, n]) => { if (n) L.push(`  nota ${name}: ${n}`); });
-        (sess.extra || []).forEach((ex) => { const d2 = (ex.sets || []).filter((s) => s.weight || s.reps).map((s) => `${s.weight || "?"}kg×${s.reps || "?"}${s.rir ? "@" + s.rir : ""}`).join(", "); if (d2) L.push(`  SOSTITUZIONE ${ex.name}: ${d2}`); });
+        L.push(`${d} · Scheda ${sess.letter} · sett. ${d >= CYCLE_START ? trainWeekOf(workouts, d) : "-"}`);
+        Object.entries((sess.notes || {}).__swaps || {}).forEach(([o, n]) => L.push(`  solo oggi: ${o} → ${n}`));
+        Object.entries(sess.notes || {}).forEach(([name, n]) => { if (n && !name.startsWith("__")) L.push(`  nota ${name}: ${n}`); });
+        (sess.extra || []).forEach((ex) => { const d2 = (ex.sets || []).filter((s) => s.weight || s.reps).map((s) => `${s.weight || "?"}kg×${s.reps || "?"}${s.rir ? "@" + s.rir : ""}`).join(", "); if (d2) L.push(`  EXTRA ${ex.name}: ${d2}`); });
         Object.entries(sess.sets || {}).forEach(([name, sets]) => {
           const done = (sets || []).filter((s) => s.weight || s.reps).map((s) => `${s.weight || "?"}kg×${s.reps || "?"}${s.rir !== undefined && s.rir !== "" ? "@" + s.rir : ""}`).join(", ");
           if (done) L.push(`  ${name}: ${done}`);
@@ -994,6 +1076,7 @@ function App({ session }) {
   const [cycles, setCycles] = useState([]);
   const [coachNotes, setCoachNotes] = useState([]);
   const [workouts, setWorkouts] = useState({});
+  const [planSwaps, setPlanSwaps] = useState({});
 
   const ping = useCallback((m) => { setToast(m); setTimeout(() => setToast(""), 2400); }, []);
   const toggleTheme = () => { const next = themeName === "dark" ? "light" : "dark"; C = PALETTES[next]; setThemeName(next); localStorage.setItem("theme-pref", next); };
@@ -1013,6 +1096,8 @@ function App({ session }) {
     setMonthlies((m.data || []).map((r) => ({ date: r.month_date, ...r.data })));
     setCycles((c.data || []).map((r) => ({ date: r.cycle_date, ...r.data })));
     setCoachNotes(cn.data || []);
+    const swapRows = (cn.data || []).filter((r) => r.kind === "plan_swaps").sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+    if (swapRows.length) { try { setPlanSwaps(JSON.parse(swapRows[0].content) || {}); } catch (e) {} }
     const wmap = {}; (wk.data || []).forEach((r) => { wmap[r.session_date] = { letter: r.letter, sets: r.sets, notes: r.notes, extra: r.extra }; });
     setWorkouts(wmap);
     const savedTheme = localStorage.getItem("theme-pref") || "dark";
@@ -1038,9 +1123,16 @@ function App({ session }) {
     return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
   };
 
+  const updatePlanSwaps = async (next) => {
+    const { error } = await sb.from("coach_notes").insert({ user_id: uid, kind: "plan_swaps", note_date: todayISO(), content: JSON.stringify(next) });
+    if (error) return false;
+    setPlanSwaps(next);
+    return true;
+  };
+
   if (!ready) return <div style={{ minHeight: "100vh", background: C.paper, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: MONO, fontSize: 12, color: C.muted }}>caricamento dati…</div>;
 
-  const shared = { uid, daily, setDaily, weeklies, setWeeklies, monthlies, setMonthlies, cycles, setCycles, coachNotes, workouts, setWorkouts, ping, thisWeek, lastWeek, weekDelta, avgMacro, sortedDays };
+  const shared = { uid, daily, setDaily, weeklies, setWeeklies, monthlies, setMonthlies, cycles, setCycles, coachNotes, workouts, setWorkouts, planSwaps, updatePlanSwaps, ping, thisWeek, lastWeek, weekDelta, avgMacro, sortedDays };
   const todayEntry = daily[todayISO()];
   const todayWorkout = workouts[todayISO()];
   const preview = {
@@ -1051,8 +1143,8 @@ function App({ session }) {
     settimana: weeklies.length ? `ultimo ${weeklies[weeklies.length - 1].date}` : "nessuno ancora",
     mese: weekOf(todayISO()) < MEASURE_FROM_WEEK ? "misure da sett. 4" : (monthlies.length ? `ultimo ${monthlies[monthlies.length - 1].date}` : "nessuno ancora"),
     ciclo: `${cycles.length} chiusi`,
-    piano: `${CYCLE_LABEL} · sett. ${weekOf(todayISO())}/${CYCLE_WEEKS}`,
-    coach: `${coachNotes.length} valutazioni`,
+    piano: `${CYCLE_LABEL} · sett. ${trainWeekOf(workouts, NEXT_DAY)}/${CYCLE_WEEKS}`,
+    coach: `${coachNotes.filter((n) => n.kind !== "plan_swaps").length} valutazioni`,
     export: "genera report",
     guida: "come funziona",
   };
@@ -1090,7 +1182,7 @@ function App({ session }) {
         {view === "settimana" && <Weekly {...shared} />}
         {view === "mese" && <Monthly {...shared} />}
         {view === "ciclo" && <Cycle {...shared} />}
-        {view === "piano" && <Piano />}
+        {view === "piano" && <Piano {...shared} />}
         {view === "coach" && <Coach {...shared} />}
         {view === "export" && <Exporter {...shared} />}
       </div>
