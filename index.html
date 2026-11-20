@@ -260,37 +260,41 @@ function AuthGate({ children }) {
 
 /* ============================ WORKOUT PLAN DATA ============================ */
 
-// [nome, reps, principale(true = composto: 2 serie sett.1, 3 dalla sett.2), nota]
+// [nome, reps, tipo, serie (da sett. 2), nota, alias storici]
+// tipo: "leg" = RIR 2 su tutte le serie · "up" = composto upper (serie 1 RIR 1, poi cedimento) · "iso" = isolamento (RIR 1-2, ultima anche a cedimento)
 const WORKOUTS = {
   A: { name: "Workout A · gambe e spinta", ex: [
-    ["Leg press", "8-10", true, "Piedi a media altezza. Ultima serie RIR 1."],
-    ["Chest press", "8-10", true, "Alt.: panca inclinata manubri. Ultima serie RIR 1."],
-    ["Lat machine presa neutra", "8-10", true, "Ultima serie RIR 1."],
-    ["Leg curl seduto", "10-12", false, ""],
-    ["Alzate laterali manubri", "12-15", false, "Solo manubri, mai cavo basso"],
-    ["Curl manubri", "10-12", false, ""],
-    ["Pushdown corda", "10-12", false, ""],
+    ["Leg press", "8-10", "leg", 3, "Piedi a media altezza, larghezza spalle. Scendi fino a circa 90° di ginocchio senza staccare il bacino."],
+    ["Panca inclinata manubri", "8-10", "up", 3, "Panca a circa 30°, petto alto. Manubri ai lati del petto alto, gomiti a circa 45° dal busto. Recupero 2-3 min.", ["Chest press"]],
+    ["Lat machine presa neutra", "8-10", "up", 3, "Dorsale: tira i gomiti verso le costole, petto in fuori, senza dondolare."],
+    ["Leg curl seduto", "10-12", "iso", 2, "Fallo subito dopo la leg press. Se è occupato: leg curl sdraiato o in piedi. Non saltarlo."],
+    ["Alzate laterali manubri", "12-15", "iso", 3, "Busto leggermente in avanti, gomiti appena flessi, sali fino all'altezza delle spalle. Il gomito guida, polso mai sopra il gomito, niente slancio col busto. Solo manubri, mai cavo basso."],
+    ["Curl manubri", "10-12", "iso", 2, "Recupero almeno 90 s."],
+    ["Pushdown corda", "10-12", "iso", 2, "Gomiti fermi lungo il busto."],
   ] },
   B: { name: "Workout B · trazione e gambe", ex: [
-    ["Hack squat", "8-10", true, "Alt.: leg press piedi alti. Nessun bilanciere sulla schiena. Ultima serie RIR 1."],
-    ["Rematore macchina presa neutra", "8-10", true, "Alt.: rematore ai cavi presa neutra. Ultima serie RIR 1."],
-    ["Chest press angolo diverso", "8-10", true, "Angolo diverso da A. Alt.: croci ai cavi. Ultima serie RIR 1."],
-    ["Hyperextension", "10-12", false, "Controllata"],
-    ["Lat machine larga", "8-10", true, "Alt.: pull-up assistite. Ultima serie RIR 1."],
-    ["Face pull", "12-15", false, "Aiuta i deltoidi posteriori"],
-    ["French press manubrio", "10-12", false, ""],
+    ["Hack squat", "8-10", "leg", 3, "Piedi a media altezza. Scendi controllato fino a circa 90°."],
+    ["Pull-up", "8-10", "up", 3, "Presa prona poco più larga delle spalle, corpo libero (scrivi 0 kg). Con 10 ripetizioni pulite su tutte le serie aggiungi zavorra.", ["Lat machine larga"]],
+    ["Rematore macchina presa neutra", "8-10", "up", 3, "Petto appoggiato, tira i gomiti indietro vicino al busto: dorsale e parte media della schiena."],
+    ["Chest press macchina", "8-10", "up", 3, "Petto centrale: maniglie all'altezza del petto, gomiti a circa 45-60° dal busto.", ["Chest press angolo diverso"]],
+    ["Alzate laterali manubri", "12-15", "iso", 3, "Come nella A."],
+    ["Face pull", "12-15", "iso", 2, "In piedi, cavo all'altezza della fronte, corda verso le orecchie, gomiti alti. Deltoide posteriore."],
+    ["Estensioni tricipiti corda sopra la testa", "10-12", "iso", 2, "Cavo basso o alto, gomiti vicini alla testa, estendi del tutto.", ["French press manubrio", "Distensioni tricipiti corda verso alto"]],
   ] },
   C: { name: "Workout C · gambe e dettaglio", ex: [
-    ["Leg extension", "10-12", false, ""],
-    ["Leg curl sdraiato", "10-12", false, ""],
-    ["Rematore a un braccio", "8-10", true, "Ultima serie RIR 1."],
-    ["Croci ai cavi", "10-12", false, "Alt.: chest press macchina"],
-    ["Alzate laterali manubri", "12-15", false, "Solo manubri, mai cavo basso"],
-    ["Curl bayesian", "10-12", false, "Alt.: prayer curl"],
-    ["Skull crusher", "10-12", false, "Alt.: pushdown"],
+    ["Leg extension", "10-12", "iso", 3, "Pausa di 1 s in alto."],
+    ["Leg curl sdraiato", "10-12", "iso", 3, "Se occupato: leg curl seduto o in piedi."],
+    ["Rematore cavo basso presa larga", "10-12", "up", 3, "Seduto, barra presa larga: tira verso la parte bassa dello sterno, gomiti a circa 60° dal busto, scapole unite a fine movimento. Lavora la parte alta della schiena (romboidi, trapezio medio, deltoide posteriore), non il dorsale.", ["Rematore a un braccio"]],
+    ["Croci ai cavi alto-basso", "10-12", "iso", 2, "Cavi in alto, le mani si incontrano davanti all'addome: petto basso.", ["Croci ai cavi"]],
+    ["Shoulder press macchina", "8-10", "up", 3, "Gomiti leggermente davanti al busto, non scendere oltre 90°. Se senti la spalla, fermati e segnalalo."],
+    ["Curl manubri panca inclinata", "10-12", "iso", 2, "Panca a circa 45°, braccia che pendono dietro al busto: allunga il capo lungo del bicipite.", ["Curl bayesian", "Curl Bicipiti panca inclinata", "Distensioni bicipiti panca inclinata manubri"]],
+    ["French press EZ", "10-12", "iso", 2, "Bilanciere EZ, gomiti fermi. Conta i dischi per lato (es. 10+10 = 20 kg).", ["Skull crusher", "French press manubrio"]],
   ] },
 };
-const setsFor = (main, week) => main ? (week <= 1 ? 2 : 3) : 2;
+const setsFor = (sets, week) => week <= 1 ? Math.min(2, sets) : sets;
+const intensityOf = (kind, n) => kind === "leg" ? "RIR 2 su tutte le serie, niente cedimento"
+  : kind === "up" ? (n >= 3 ? "serie 1 a RIR 1, serie 2-3 a cedimento (RIR 0)" : "serie 1 a RIR 1, ultima a cedimento")
+  : "RIR 1-2, ultima serie anche a cedimento se la tecnica regge";
 
 function bestSet(sets) {
   return (sets || []).reduce((best, s) => {
@@ -435,7 +439,7 @@ function Daily({ uid, daily, setDaily, ping, thisWeek, weekDelta, avgMacro }) {
 
 /* ========================== ALLENAMENTO ========================== */
 
-function ExerciseBlock({ name, targetSets, repsRange, note, rows, onSet, noteVal, onNote, lastText, swappedFrom, swapKind, onSwap, onRestore }) {
+function ExerciseBlock({ name, targetSets, repsRange, note, rows, onSet, noteVal, onNote, lastText, swappedFrom, swapKind, onSwap, onRestore, intensity }) {
   const [more, setMore] = useState(0);
   const [swapOpen, setSwapOpen] = useState(false);
   const [swapName, setSwapName] = useState("");
@@ -450,7 +454,8 @@ function ExerciseBlock({ name, targetSets, repsRange, note, rows, onSet, noteVal
         {repsRange && <span style={{ fontFamily: MONO, fontSize: 11, color: C.muted, whiteSpace: "nowrap" }}>target {repsRange}</span>}
       </div>
       {swappedFrom && <div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 6 }}>al posto di {swappedFrom} · {swapKind === "oggi" ? "solo oggi" : "fisso nella scheda"}</div>}
-      {note && <div style={{ fontFamily: SANS, fontSize: 11, color: C.muted, marginBottom: 8 }}>{note}</div>}
+      {intensity && <div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 6 }}>{intensity}</div>}
+      {note && <div style={{ fontFamily: SANS, fontSize: 11.5, color: C.muted, marginBottom: 8, lineHeight: 1.5 }}>{note}</div>}
       {lastText && <div style={{ fontFamily: MONO, fontSize: 11, color: C.ok, marginBottom: 10 }}>ultima volta: {lastText}</div>}
       <div style={{ display: "grid", gridTemplateColumns: grid, gap: 8, marginBottom: 6 }}>
         <span /><span style={{ fontFamily: MONO, fontSize: 10, color: C.muted }}>KG</span><span style={{ fontFamily: MONO, fontSize: 10, color: C.muted }}>REPS</span><span style={{ fontFamily: MONO, fontSize: 10, color: C.muted }}>RIR</span>
@@ -538,12 +543,14 @@ function Allenamento({ uid, workouts, setWorkouts, daily, setDaily, ping, planSw
     ping(ok ? `${orig} rimesso nella scheda ${letter}` : "Errore nel salvare la scheda");
   };
 
-  const lastTime = (name) => {
+  const lastTime = (name, aliases) => {
+    const names = [name, ...(aliases || [])];
     const days = Object.keys(workouts).filter((d) => d < date && d >= CYCLE_START).sort().reverse();
     for (const d of days) {
       const sess = workouts[d];
-      const b = bestSet(sess.sets?.[name]) || bestSet(sess.extra?.find((e) => e.name === name)?.sets);
-      if (b && b.weight) return `${b.weight}kg × ${b.reps} (${d})`;
+      let b = null;
+      for (const nm of names) { b = bestSet(sess.sets?.[nm]) || bestSet(sess.extra?.find((e) => e.name === nm)?.sets); if (b && (b.weight || b.reps)) break; }
+      if (b && (b.weight || b.reps)) return `${b.weight}kg × ${b.reps} (${d})`;
     }
     return null;
   };
@@ -576,15 +583,14 @@ function Allenamento({ uid, workouts, setWorkouts, daily, setDaily, ping, planSw
       <Card style={{ borderLeft: `3px solid ${C.signal}` }}>
         <div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 6, textTransform: "uppercase" }}>Settimana {week} di {CYCLE_WEEKS} · sessione {sessN} di {SESSIONS_PER_WEEK}</div>
         <div style={{ fontFamily: SANS, fontSize: 12.5, color: C.muted, lineHeight: 1.55 }}>
-          La settimana avanza ogni 3 allenamenti fatti, non col calendario. {week <= 1 ? "Sett. 1: 2 serie per esercizio, carichi leggeri, serve a trovare i pesi giusti nella nuova palestra. " : "Composti 3 serie, il resto 2. "}
-          RIR 2–3 ovunque, ultima serie dei composti a RIR 1. Niente cedimento. Per cambiare un esercizio usa "sostituisci" sotto l'esercizio.
+          La settimana avanza ogni 3 allenamenti fatti, non col calendario. Gambe (leg press, hack) sempre RIR 2. Composti upper: serie 1 a RIR 1, le altre a cedimento. Isolamenti: RIR 1-2, ultima anche a cedimento. Segna RIR 0 solo se non riesci a fare un'altra ripetizione pulita. Se la serie 2 ha le stesse ripetizioni della serie 1, la serie 1 non era a cedimento: alza il carico. Progressione: quando fai il massimo delle ripetizioni su tutte le serie, la volta dopo +2,5-5% di carico. Per cambiare un esercizio usa "sostituisci".
         </div>
       </Card>
-      {plan.ex.map(([orig, repsRange, main, note]) => {
-        const r = resolve(orig); const name = r.name;
-        return <ExerciseBlock key={letter + orig + name} name={name} targetSets={setsFor(main, week)} repsRange={repsRange} note={r.from ? "" : note}
+      {plan.ex.map(([orig, repsRange, kind, nSets, note, aliases]) => {
+        const r = resolve(orig); const name = r.name; const ts = setsFor(nSets, week);
+        return <ExerciseBlock key={letter + orig + name} name={name} targetSets={ts} repsRange={repsRange} note={r.from ? "" : note} intensity={intensityOf(kind, ts)}
           rows={sets[name] || []} onSet={(idx, field, val) => setPlanSet(name, idx, field, val)}
-          noteVal={notes[name]} onNote={(v) => setNotes((n) => ({ ...n, [name]: v }))} lastText={lastTime(name)}
+          noteVal={notes[name]} onNote={(v) => setNotes((n) => ({ ...n, [name]: v }))} lastText={lastTime(name, r.from ? null : aliases)}
           swappedFrom={r.from} swapKind={r.kind}
           onSwap={(newName, permanent) => swapExercise(orig, name, newName, permanent)}
           onRestore={() => restoreExercise(orig, name, r.kind)} />;
@@ -943,7 +949,7 @@ function Piano({ workouts, planSwaps }) {
       <div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 6, textTransform: "uppercase" }}>Allenamento · settimana {week} di {CYCLE_WEEKS} · prossima sessione {sessN}/{SESSIONS_PER_WEEK}</div>
       <div style={{ fontFamily: MONO, fontSize: 11, color: C.muted, marginBottom: 8 }}>CALENDARIO SETT. {weekOf(todayISO())} · DIETA: {phaseOf().name.toUpperCase()}</div>
       <div style={{ fontFamily: SANS, fontSize: 12.5, color: C.muted, lineHeight: 1.6 }}>
-        Start {CYCLE_START}. La settimana di allenamento avanza ogni 3 sessioni fatte. Sett. 1: 2 serie per esercizio. Sett. 2: composti 3 serie. RIR 2–3 ovunque, ultima serie dei composti a RIR 1, mai cedimento. 8–10k passi al giorno. Deficit deciso dal coach dopo la calibrazione. Circonferenze dalla sett. {MEASURE_FROM_WEEK} di calendario. Checkpoint sett. 6 e 12.
+        Start {CYCLE_START}. La settimana di allenamento avanza ogni 3 sessioni fatte. Gambe RIR 2; composti upper serie 1 a RIR 1 e il resto a cedimento; isolamenti RIR 1-2 con ultima serie anche a cedimento. Proteine minimo 110 g ogni giorno. Creatina 3-5 g ogni giorno. Circa 8000 passi al giorno. Deficit deciso dal coach dopo la calibrazione. Circonferenze dalla sett. {MEASURE_FROM_WEEK} di calendario. Checkpoint sett. 6 e 12.
       </div>
     </Card>
     <Card>
@@ -957,12 +963,12 @@ function Piano({ workouts, planSwaps }) {
     </div>
     <Card>
       <div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginBottom: 14, textTransform: "uppercase" }}>{WORKOUTS[open].name}</div>
-      {WORKOUTS[open].ex.map(([orig, reps, main, note], i) => {
+      {WORKOUTS[open].ex.map(([orig, reps, kind, nSets, note], i) => {
         const name = effectiveName(orig, open, planSwaps);
         return <div key={i} style={{ padding: "11px 0", borderBottom: `1px solid ${C.wash}` }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
             <span style={{ fontFamily: SANS, fontSize: 14, fontWeight: 600 }}>{name}</span>
-            <span style={{ fontFamily: MONO, fontSize: 13, whiteSpace: "nowrap" }}>{setsFor(main, week)} × {reps}</span>
+            <span style={{ fontFamily: MONO, fontSize: 13, whiteSpace: "nowrap" }}>{setsFor(nSets, week)} × {reps}</span>
           </div>
           {name !== orig ? <div style={{ fontFamily: MONO, fontSize: 11, color: C.signal, marginTop: 3 }}>al posto di {orig}</div>
             : note && <div style={{ fontFamily: SANS, fontSize: 12, color: C.muted, marginTop: 3 }}>{note}</div>}
